@@ -1,0 +1,29 @@
+---
+description: Boundaries for agent edits in this Kafka fork. Public API, generated code, release tooling, and compatibility.
+globs: "**/*"
+alwaysApply: true
+---
+
+# PR guardrails
+
+This checkout is the personal fork `1123/kafka`. Ship work on a feature branch of that fork. Do not push to `apache/kafka`, do not open a pull request against upstream, and do not commit on `trunk`.
+
+A KIP is required before changing a public interface, the wire protocol, a configuration, or a metric. The public client surface is the `javadoc { include ... }` list on `:clients` in `build.gradle` (`org.apache.kafka.clients.admin`, `consumer`, `producer`, and the `org.apache.kafka.common` packages listed there). Other modules publish their own javadoc includes (Connect API, Streams, coordinator `api` packages). If the request does not include an accepted KIP, stop at the boundary and say which packages would have to change.
+
+## Leave these alone unless the user asked for that file
+
+- Generated sources: `**/generated/**`, `**/generated-test/**`. Edit the JSON message specs and run `./gradlew processMessages processTestMessages`.
+- Release and build infrastructure: `release/`, `gradle/wrapper/`, `wrapper.gradle`, `gradle/dependencies.gradle` version pins, Docker promotion and official-image workflows, `committer-tools/`.
+- Checkstyle, SpotBugs, RAT, Spotless, and `org.apache.kafka.public-api-checker` configuration. Fix the code instead of disabling a check.
+- `checkstyle/import-control*.xml`, unless the task is explicitly an import-control change. Clients must not take a dependency on the broker.
+
+## Compatibility
+
+Source compatibility follows `modulesNeedingJava11` in `build.gradle`. Clients, generator, streams, and `test-common:test-common-util` stay on Java 11. Every other module stays on Java 17. Do not bump a protocol version's lower bound; dropping an old message version requires a KIP (`clients/src/main/resources/common/message/README.md`).
+
+## Every code change
+
+- New source files include the Apache license header. Java must match `checkstyle/java.header`. RAT excludes are in the root `build.gradle` `rat` block; `.cursor/**` is excluded because Cursor rules and skills have to start with YAML frontmatter. `template.java` still has the header.
+- AI-assisted commits include a `Co-Authored-By` or `Generated-by` trailer, as in `CONTRIBUTING.md`.
+- Commit subjects use `KAFKA-XXXXX` only when a real JIRA exists; otherwise `MINOR` or `HOTFIX`.
+- Secrets stay in the environment (`CURSOR_API_KEY`, `SLACK_SIGNING_SECRET`). Do not write them into source, workflows, or logs.

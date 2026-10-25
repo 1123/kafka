@@ -1,0 +1,60 @@
+---
+description: Kafka test standards. JUnit 5, Mockito, and the ClusterTest / ClusterInstance framework.
+globs: "**/*Test.java,**/*Test.scala"
+alwaysApply: false
+---
+
+# Kafka tests
+
+Put tests in the module you change. Prefer a unit test. Use a cluster test only when the behavior needs a running broker.
+
+## JUnit 5
+
+Use JUnit Jupiter (`org.junit.jupiter.api`). Do not add JUnit 4 tests.
+
+Assertions come from `org.junit.jupiter.api.Assertions` (`assertEquals`, `assertThrows`, and the other `assert*` methods). This repo does not use AssertJ.
+
+Name the test after the behavior (`testCannotSendToInternalTopic`, `shouldRestoreNullRecord`).
+
+Gradle splits suites by tag (`build.gradle`):
+
+- `@Tag("integration")` runs in `integrationTest` and is excluded from `unitTest`.
+- Methods without that tag run in `unitTest`.
+
+```bash
+./gradlew :clients:test --tests org.apache.kafka.clients.MetadataTest
+./gradlew :clients:test --tests org.apache.kafka.clients.MetadataTest.testTimeToNextUpdate
+```
+
+`scripts/simulate_ci.sh --module <module> --tests <filter>` runs Checkstyle and that test filter together.
+
+## Mockito
+
+Mockito is on the test classpath. Create mocks with `Mockito.mock` / `mock`, stub with `when(...).thenReturn(...)`, and check interactions with `verify`. Do not add another mocking library.
+
+Prefer deterministic fakes already in the tree (`MockTime`, test utilities under `org.apache.kafka.test` or the module's test helpers) over `Thread.sleep` or a live socket.
+
+## Cluster tests
+
+The framework is documented in `test-common/test-common-internal-api/src/main/java/org/apache/kafka/common/test/api/README.md`. `ClusterTestExtensions` is registered through SPI. Do not add `@ExtendWith` for it.
+
+- `@ClusterTest` declares one cluster. `@ClusterTests` declares several. `@ClusterTemplate("methodName")` points at a static method returning `List<ClusterConfig>`.
+- `@ClusterTestDefaults` sets class-level defaults.
+- Inject `ClusterInstance` as a test-method parameter or as a constructor argument when `@BeforeEach` needs the cluster. The same instance is passed either way.
+- The cluster starts before `@BeforeEach` when `autoStart` is left at its default.
+- `ClusterConfig` is immutable inside the test method.
+
+Do not combine `@ClusterTest` / `@ClusterTests` / `@ClusterTemplate` with `@ParameterizedTest`. A plain `@Test` method does not start a cluster and does not receive `ClusterInstance`.
+
+```java
+@ClusterTest(brokers = 3)
+void testSomething(ClusterInstance cluster) {
+    cluster.admin().createTopics(...);
+}
+```
+
+## Flakes
+
+A test that is intentionally skipped on normal runs carries `@Flaky` and a JIRA id, for example `@Flaky("KAFKA-13514")`. Those tests stay out of the default run unless `-Pkafka.test.run.flaky=true`. Do not delete an assertion or add a retry loop to hide a failure.
+
+Test log verbosity is `log4j2.yaml` under that module's `src/test/resources/`.

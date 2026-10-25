@@ -296,7 +296,10 @@ if (repo != null) {
         'clients/src/test/resources/serializedData/*',
         'docker/test/fixtures/secrets/*',
         'docker/examples/fixtures/secrets/*',
-        'docker/docker_official_images/.gitkeep'
+        'docker/docker_official_images/.gitkeep',
+        // Cursor rules and skills must begin with YAML frontmatter, so they cannot
+        // carry an ASF header. template.java under this tree still includes one.
+        '**/.cursor/**'
     ])
   }
 } else {

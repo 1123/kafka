@@ -1,0 +1,58 @@
+---
+description: Kafka Java style. Checkstyle, Spotless import order, SLF4J, and the ASF license header.
+globs: "**/*.java"
+alwaysApply: false
+---
+
+# Kafka Java style
+
+Follow the checks already enforced in this repo. Do not weaken them to land a change.
+
+## License header
+
+Every new or edited Java file starts with the header in `checkstyle/java.header`. Checkstyle's `Header` module compares that file byte for byte. There is no blank line between the header and `package`.
+
+## Layout and Checkstyle
+
+Rules live in `checkstyle/checkstyle.xml`. Import control is per module (`checkstyle/import-control*.xml`). The global file disallows `kafka.*` from `org.apache.kafka` and says to think hard before changing layering.
+
+- 4-space indent, no tabs (`FileTabCharacter`). K&R braces (`LeftCurly`, `RightCurly`).
+- One statement per line. No star imports (`AvoidStarImport`).
+- No `System.exit`. Use `Exit.exit` (Checkstyle id `dontUseSystemExit`).
+- No `toLowerCase()` / `toUpperCase()` without a `Locale` argument.
+- Constants are `UPPER_SNAKE`. The logger field is the Checkstyle exception: name it `log`.
+- Complexity caps: method length 170, parameters 13, cyclomatic complexity 16, NPath 500, boolean expression complexity 5, JavaNCSS method size 100.
+- `FinalLocalVariable` (including parameters and enhanced-for variables) is enforced under `org.apache.kafka.streams`. Prefer `final` locals elsewhere too.
+- Do not add a `checkstyle/suppressions.xml` entry to silence a new violation.
+
+## Imports
+
+Checkstyle does not order imports. Spotless does (`build.gradle`):
+
+`kafka`, `org.apache.kafka`, `com`, `net`, `org`, `java`, `javax`, then everything else, then static imports.
+
+Blank line between groups. Run `./gradlew spotlessApply` on the modules you touched, then `checkstyleMain` / `checkstyleTest`.
+
+## Logging
+
+SLF4J only. Log4j and `System.out` are not the project logger.
+
+```java
+private static final Logger log = LoggerFactory.getLogger(TheClass.class);
+```
+
+Parameterized messages, with the throwable last:
+
+```java
+log.warn("Failed to load metadata for topic {}", topic, exception);
+```
+
+Do not concatenate arguments into the message string. Do not log secrets, credentials, or full record payloads.
+
+## Language level
+
+`javac --release` is 11 for `:clients`, `:generator`, `:streams`, `:streams:test-utils`, `:streams:examples`, `:streams:streams-scala`, and `:test-common:test-common-util`. It is 17 everywhere else. Do not use APIs newer than that module's release level, and do not use preview features.
+
+## Generated sources
+
+Do not hand-edit `**/generated/**` or `**/generated-test/**`. Change the message specs under `clients/src/main/resources/common/message/` and regenerate with `./gradlew processMessages processTestMessages`.

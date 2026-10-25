@@ -1,0 +1,297 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one or more
+ contributor license agreements.  See the NOTICE file distributed with
+ this work for additional information regarding copyright ownership.
+ The ASF licenses this file to You under the Apache License, Version 2.0
+ (the "License"); you may not use this file except in compliance with
+ the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grok Bot</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --card: #fffdf8;
+      --line: #e2d9cc;
+      --accent: #b45309;
+      --ok: #166534;
+      --bad: #991b1b;
+      --wait: #92400e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.45 "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 64px; }
+    h1 { font-size: 1.8rem; margin: 0 0 6px; }
+    h2 { font-size: 1.1rem; margin: 0 0 12px; }
+    p { margin: 0; }
+    .banner, .card, .status {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .banner { padding: 14px 16px; margin: 18px 0; }
+    .status { padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 14px 22px; }
+    .status span { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
+    @media (min-width: 860px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+    }
+    .card { padding: 16px; }
+    .row { border-top: 1px solid var(--line); padding: 12px 0; }
+    .row:first-of-type { border-top: 0; }
+    .title { font-weight: 650; }
+    .meta { color: var(--muted); font-size: 0.92rem; margin-top: 4px; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 0.78rem;
+      letter-spacing: 0.02em;
+      background: #f3efe6;
+      margin-right: 6px;
+    }
+    .pill.pending, .pill.not_sent { color: var(--wait); }
+    .pill.approved, .pill.launched { color: var(--ok); }
+    .pill.rejected, .pill.error { color: var(--bad); }
+    button, .ghost {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    form { display: grid; gap: 8px; }
+    label { display: grid; gap: 4px; font-size: 0.92rem; color: var(--muted); }
+    input, textarea {
+      font: inherit;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea { min-height: 72px; resize: vertical; }
+    #notice { min-height: 1.4em; margin-top: 12px; color: var(--muted); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; }
+  </style>
+</head>
+<body data-repo="{{ default_repo }}" data-ref="{{ default_ref }}">
+<main>
+  <h1>Grok Bot</h1>
+  <p>PM, QA, and DevOps approvals for the Kafka fork. Agents start only after a person asks them to.</p>
+  <div class="banner">
+    <strong>In-memory mock.</strong>
+    Restarting the process clears every row. Seeded items are marked <em>mock</em> and were not sent to Slack or to <code>api.cursor.com</code>.
+  </div>
+  <div class="status" id="flags">Loading status…</div>
+  <p id="notice" role="status"></p>
+  <div class="grid">
+    <section class="card">
+      <h2>Pending</h2>
+      <div id="pending">None.</div>
+    </section>
+    <section class="card">
+      <h2>Decided</h2>
+      <div id="decided">None.</div>
+    </section>
+    <section class="card">
+      <h2>Agent runs</h2>
+      <div id="agents">None.</div>
+    </section>
+  </div>
+  <div class="grid grid-2" style="margin-top: 16px;">
+    <section class="card">
+      <h2>Queue an approval</h2>
+      <form id="queue-form">
+        <label>Title <input name="title" required maxlength="200" placeholder="Short description"></label>
+        <label>Prompt <textarea name="prompt" maxlength="20000" placeholder="What the agent should do, once approved"></textarea></label>
+        <label>Repo <input name="repo" required></label>
+        <label>Ref <input name="ref" required></label>
+        <button class="primary" type="submit">Queue</button>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Launch an agent</h2>
+      <form id="launch-form">
+        <label>Prompt <textarea name="prompt" required maxlength="20000" placeholder="Instruction sent as prompt.text"></textarea></label>
+        <label>Repo <input name="repo" required></label>
+        <label>Ref <input name="ref" required></label>
+        <button class="primary" type="submit">Launch</button>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+const notice = document.querySelector("#notice");
+const defaults = {
+  repo: document.body.dataset.repo,
+  ref: document.body.dataset.ref
+};
+for (const form of document.querySelectorAll("form")) {
+  form.elements.repo.value = defaults.repo;
+  form.elements.ref.value = defaults.ref;
+}
+
+function pill(status) {
+  return `<span class="pill ${status}">${status}</span>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[ch]));
+}
+
+function approvalRow(item) {
+  const mock = item.mock ? `<span class="pill">mock</span>` : "";
+  const buttons = item.status === "pending" ? `
+    <div class="actions">
+      <button data-act="approve" data-id="${item.id}">Approve</button>
+      <button class="primary" data-act="launch" data-id="${item.id}" ${item.prompt ? "" : "disabled"}>Approve and launch</button>
+      <button data-act="reject" data-id="${item.id}">Reject</button>
+    </div>` : "";
+  return `<div class="row">
+    <div class="title">${escapeHtml(item.title)}</div>
+    <div class="meta">${pill(item.status)}${mock}<code>${escapeHtml(item.id)}</code>
+      · ${escapeHtml(item.source)} · ${escapeHtml(item.repo)} @ ${escapeHtml(item.ref)}</div>
+    ${item.prompt ? `<div class="meta">${escapeHtml(item.prompt)}</div>` : ""}
+    ${item.note ? `<div class="meta">${escapeHtml(item.note)}</div>` : ""}
+    ${buttons}
+  </div>`;
+}
+
+function agentRow(item) {
+  const mock = item.mock ? `<span class="pill">mock</span>` : "";
+  const link = item.url ? ` · <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>` : "";
+  const remote = item.agent_id ? ` · ${escapeHtml(item.agent_id)}` : "";
+  return `<div class="row">
+    <div class="title">${escapeHtml(item.prompt)}</div>
+    <div class="meta">${pill(item.status)}${mock}<code>${escapeHtml(item.id)}</code>${remote}${link}</div>
+    <div class="meta">${escapeHtml(item.repo)} @ ${escapeHtml(item.ref)}</div>
+    ${item.error ? `<div class="meta">${escapeHtml(item.error)}</div>` : ""}
+  </div>`;
+}
+
+async function refresh() {
+  const response = await fetch("/api/status");
+  const data = await response.json();
+  document.querySelector("#flags").innerHTML = `
+    <div><span>Cursor API key</span><br>${data.cursor_api_key_configured ? "configured" : "missing"}</div>
+    <div><span>Slack signing secret</span><br>${data.slack_signing_configured ? "configured" : "missing"}</div>
+    <div><span>Default repo</span><br><code>${escapeHtml(data.defaults.repo)}</code></div>
+    <div><span>Default ref</span><br><code>${escapeHtml(data.defaults.ref)}</code></div>`;
+  const pending = data.approvals.filter((item) => item.status === "pending");
+  const decided = data.approvals.filter((item) => item.status !== "pending");
+  document.querySelector("#pending").innerHTML = pending.map(approvalRow).join("") || "None.";
+  document.querySelector("#decided").innerHTML = decided.map(approvalRow).join("") || "None.";
+  document.querySelector("#agents").innerHTML = data.agents.map(agentRow).join("") || "None.";
+}
+
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: body ? JSON.stringify(body) : "{}"
+  });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch (err) { payload = {raw: text}; }
+  if (!response.ok) {
+    const detail = payload && payload.detail;
+    const agentError = detail && detail.agent && detail.agent.error;
+    const message = agentError || (typeof detail === "string" ? detail : detail ? JSON.stringify(detail) : text);
+    throw new Error(message || response.statusText);
+  }
+  return payload;
+}
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-act]");
+  if (!button) return;
+  button.disabled = true;
+  const id = button.dataset.id;
+  try {
+    if (button.dataset.act === "reject") {
+      await postJson(`/api/approvals/${id}/reject`);
+      notice.textContent = `Rejected ${id}.`;
+    } else if (button.dataset.act === "launch") {
+      const result = await postJson(`/api/approvals/${id}/approve?launch=true`);
+      const launch = result.launch;
+      notice.textContent = launch && launch.ok ? `Launched from ${id}.` : `Approved ${id}. Launch: ${launch && launch.error ? launch.error : (launch && launch.agent && launch.agent.error) || "not launched"}`;
+    } else {
+      await postJson(`/api/approvals/${id}/approve`);
+      notice.textContent = `Approved ${id}.`;
+    }
+  } catch (err) {
+    notice.textContent = err.message;
+  }
+  await refresh();
+});
+
+document.querySelector("#queue-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    const created = await postJson("/api/approvals", {
+      title: form.elements.title.value,
+      prompt: form.elements.prompt.value,
+      repo: form.elements.repo.value,
+      ref: form.elements.ref.value,
+      source: "dashboard"
+    });
+    notice.textContent = `Queued ${created.id}.`;
+    form.elements.title.value = "";
+    form.elements.prompt.value = "";
+  } catch (err) {
+    notice.textContent = err.message;
+  }
+  await refresh();
+});
+
+document.querySelector("#launch-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    const result = await postJson("/api/agents", {
+      prompt: form.elements.prompt.value,
+      repo: form.elements.repo.value,
+      ref: form.elements.ref.value
+    });
+    notice.textContent = `Launched ${result.agent.agent_id || result.agent.id}.`;
+    form.elements.prompt.value = "";
+  } catch (err) {
+    notice.textContent = err.message;
+  }
+  await refresh();
+});
+
+refresh().catch((err) => { notice.textContent = err.message; });
+setInterval(() => refresh().catch(() => {}), 5000);
+</script>
+</body>
+</html>

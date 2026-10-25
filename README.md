@@ -1,3 +1,87 @@
+# Cursor & Grok Bot setup guide
+
+This branch lives on the personal fork `1123/kafka`. Keep it here. Do not push it to `apache/kafka` and do not open a pull request against upstream. The Apache Kafka README below this section is unchanged.
+
+## Problem
+
+Agent edits in this tree miss Kafka's real gates: the Checkstyle header and complexity rules, Spotless import order, SLF4J, the Java 11/17 split, Apache RAT, and the `ClusterTest` / `ClusterInstance` framework. The fork adds a Cursor working agreement for those gates, plus a small Grok Bot so a person can approve work before a cloud agent starts.
+
+## What was added
+
+| Path | Role |
+| --- | --- |
+| `.cursor/rules/kafka-style.mdc` | Java style, Checkstyle limits, SLF4J, ASF header |
+| `.cursor/rules/kafka-testing.mdc` | JUnit 5, Mockito, `@ClusterTest` / `ClusterInstance` |
+| `.cursor/rules/pr-guardrails.mdc` | Public API, generated code, release tooling, compatibility |
+| `.cursor/skills/kip-scaffolder/` | KIP or JIRA to code, including `template.java` |
+| `grok-bot/` | FastAPI dashboard, Slack webhook, approve / reject, agent launch |
+| `scripts/cursor_api_trigger.py` | `POST https://api.cursor.com/v1/agents` |
+| `scripts/simulate_ci.sh` | Checkstyle, SpotBugs, and an optional test filter |
+| `.github/workflows/agent-guardrails.yml` | Checkstyle on modules a pull request changed |
+
+`.cursor/**` is excluded from Apache RAT because Cursor rules and skills must start with YAML frontmatter. `template.java` still has the ASF header. It sits outside every Gradle source set (`src/main/java`, `src/test/java`), so `checkstyleMain` and `compileJava` leave it alone until the KIP skill copies it into a module.
+
+## Run Grok Bot
+
+```bash
+python3 -m venv /tmp/grok-bot-venv
+/tmp/grok-bot-venv/bin/pip install -r grok-bot/requirements.txt
+cd grok-bot
+export SLACK_SIGNING_SECRET=dev-secret
+export CURSOR_API_KEY=...
+export GROK_DEFAULT_REPO=https://github.com/1123/kafka
+export GROK_DEFAULT_REF=trunk
+uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+`CURSOR_API_KEY` is required only when a launch is requested. `SLACK_SIGNING_SECRET` is required for `POST /slack/events`. Both stay in the environment.
+
+Open http://127.0.0.1:8000 . Slack slash commands and Events API callbacks post to `/slack/events`. The app checks `X-Slack-Signature` (v0 HMAC-SHA256, five-minute window). A URL verification handshake returns the challenge. An `app_mention` or slash command queues an approval and does not start an agent.
+
+`POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/reject`, and `POST /api/agents` are the dashboard controls. A launch runs `scripts/cursor_api_trigger.py`.
+
+## Dashboard mock
+
+The page is one column on a warm background:
+
+1. A banner that the store is in-memory and seeded rows are mocks.
+2. A status strip: whether the Cursor API key and Slack signing secret are set (booleans only), plus the default repo and ref.
+3. **Pending**, seeded with `apr-1001` "Share-group lag metric" (source `mock`). Approve records the decision. Approve and launch also calls the Cursor API.
+4. **Decided**, seeded with `apr-1002` "Edit generated MetadataResponse.java", already rejected, because generated sources are regenerated rather than edited.
+5. **Agent runs**, seeded with `agent-1001` in status `not_sent`. That row was never sent to `api.cursor.com`.
+6. Forms to queue an approval and to launch an agent (prompt, repo, ref).
+
+The layout is this page. Reload it after `uvicorn` is up.
+
+## Local CI subset
+
+```bash
+scripts/simulate_ci.sh
+scripts/simulate_ci.sh --module clients --skip-spotbugs
+scripts/simulate_ci.sh --module clients --tests org.apache.kafka.clients.MetadataTest
+scripts/simulate_ci.sh --with-rat
+```
+
+`build.yml` runs `./gradlew check releaseTarGz -x test` on Java 25. This helper runs `checkstyleMain`, `checkstyleTest`, and `spotbugsMain` (the checks inside `check` that catch agent patches). The release tarball stays on that validate job. `--tests` adds a Gradle `--tests` filter.
+
+## Launch a cloud agent
+
+```bash
+export CURSOR_API_KEY=...
+python3 scripts/cursor_api_trigger.py \
+  --repo https://github.com/1123/kafka \
+  --ref trunk \
+  --prompt "Describe the broker startup path. Do not open a pull request."
+```
+
+The script calls `POST /v1/agents` on `https://api.cursor.com`, as documented at <https://cursor.com/docs/cloud-agent/api/endpoints> (Basic auth, API key as the username, empty password). The body sets `autoCreatePR` and `workOnCurrentBranch` to false. `--dry-run` prints the JSON and does not use the network. The API is a public beta.
+
+## Agent guardrails workflow
+
+`.github/workflows/agent-guardrails.yml` runs on `pull_request` and `workflow_dispatch` with `contents: read`. It uses `.github/actions/setup-gradle` (Temurin 17, the action's broker baseline) and runs Checkstyle for Gradle projects whose `src/` or build files changed. A root `*.gradle`, `gradle/`, or `checkstyle/` diff runs Checkstyle for the whole build. SpotBugs runs when the dispatch input `run-spotbugs` is true, because SpotBugs compiles main sources and the main CI job already runs it. `ci.yml` and `build.yml` are unchanged. GitHub shows `workflow_dispatch` in the Actions tab once this file is on the repository default branch.
+
+---
+
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/kafka-logo-readme-light.svg">
