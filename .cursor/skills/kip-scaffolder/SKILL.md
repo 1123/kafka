@@ -9,6 +9,8 @@ Use this when the input is a KIP or a JIRA, not a drive-by refactor. Read `.curs
 
 ## 1. Read the proposal
 
+The task usually arrives as a filled-in `.cursor/skills/kip-scaffolder/task-template.md`. If ticket, target module, or public API impact is blank, fill what the KIP or JIRA text supports. `Target Module: Auto-Detect` means use step 2. `Public API Impact: Needs KIP check` means run the gap check below and stop if the change is not approved.
+
 Collect the KIP page (https://cwiki.apache.org/confluence/display/KAFKA/) or the JIRA description, the motivation, the public API diff, and the compatibility section. Restate, in a few lines:
 
 - user-visible behavior
@@ -75,3 +77,11 @@ Generated-by: <tool name and version>
 ```
 
 Do not commit on `trunk`.
+
+## Done when
+
+- The implementation is in the target module.
+- Unit tests cover the edge cases. Add `@ClusterTest` only when the assertion needs broker state.
+- `./gradlew :module:spotlessApply` and `scripts/simulate_ci.sh --module module` are green (Checkstyle and SpotBugs).
+- The commit subject is `KAFKA-XXXXX: ...` or `MINOR: ...`, with the `Co-Authored-By` and `Generated-by` trailers.
+- The commit is not on `trunk`.
