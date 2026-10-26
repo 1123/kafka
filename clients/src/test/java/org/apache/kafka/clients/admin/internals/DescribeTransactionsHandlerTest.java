@@ -29,6 +29,7 @@ import org.apache.kafka.common.utils.internals.LogContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -176,6 +177,7 @@ public class DescribeTransactionsHandlerTest {
             .setProducerId(12345L)
             .setProducerEpoch((short) 15)
             .setTransactionStartTimeMs(1599151791L)
+            .setTransactionLastUpdateTimeMs(1599152791L)
             .setTransactionTimeoutMs(10000)
             .setTopics(new DescribeTransactionsResponseData.TopicDataCollection(asList(
                 new DescribeTransactionsResponseData.TopicData()
@@ -209,6 +211,9 @@ public class DescribeTransactionsHandlerTest {
         assertEquals(expected.producerEpoch(), actual.producerEpoch());
         assertEquals(expected.transactionTimeoutMs(), actual.transactionTimeoutMs());
         assertEquals(expected.transactionStartTimeMs(), actual.transactionStartTimeMs().orElse(-1));
+        final long expectedLastUpdateTimeMs = expected.transactionLastUpdateTimeMs();
+        assertEquals(expectedLastUpdateTimeMs < 0 ? OptionalLong.empty() : OptionalLong.of(expectedLastUpdateTimeMs),
+            actual.transactionLastUpdateTimeMs());
         assertEquals(collectTransactionPartitions(expected), actual.topicPartitions());
     }
 
