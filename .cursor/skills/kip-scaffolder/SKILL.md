@@ -69,19 +69,28 @@ Use the Gradle project path with colons when it is nested (`streams:examples`). 
 
 Subject: `KAFKA-XXXXX: ...` when the JIRA is real, otherwise `MINOR: ...`.
 
-Trailer, because the change was agent-assisted:
+Author: the developer running the agent, never a bot identity. Follow the author rules in `pr-guardrails.mdc` (local `git config`, or the task's `Author` field in a cloud agent).
+
+One trailer, because the change was agent-assisted:
 
 ```text
-Co-Authored-By: <tool name and version>
 Generated-by: <tool name and version>
 ```
 
+If the change is user-visible, add the upgrade note described in `pr-guardrails.mdc` (section for the version in `gradle.properties`, without `-SNAPSHOT`).
+
 Do not commit on `trunk`.
+
+## 7. Upstream-ready branch
+
+Follow "Upstream-ready branch" in `pr-guardrails.mdc`: create `<JIRA-ID>-upstream` from current apache trunk with only the feature commits, verify that no scaffolding files are in the diff, re-run the targeted tests, and push it to `origin` only.
 
 ## Done when
 
 - The implementation is in the target module.
 - Unit tests cover the edge cases. Add `@ClusterTest` only when the assertion needs broker state.
 - `./gradlew :module:spotlessApply` and `scripts/simulate_ci.sh --module module` are green (Checkstyle and SpotBugs).
-- The commit subject is `KAFKA-XXXXX: ...` or `MINOR: ...`, with the `Co-Authored-By` and `Generated-by` trailers.
+- The commit subject is `KAFKA-XXXXX: ...` or `MINOR: ...`, authored by the developer (not a bot identity), with exactly one `Generated-by` trailer.
+- User-visible changes have an upgrade note under the section for the version in `gradle.properties`.
 - The commit is not on `trunk`.
+- `<JIRA-ID>-upstream` exists on `origin`, is based on current apache trunk, and contains no scaffolding files.

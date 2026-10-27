@@ -24,6 +24,29 @@ Source compatibility follows `modulesNeedingJava11` in `build.gradle`. Clients, 
 ## Every code change
 
 - New source files include the Apache license header. Java must match `checkstyle/java.header`. RAT excludes are in the root `build.gradle` `rat` block; `.cursor/**` is excluded because Cursor rules and skills have to start with YAML frontmatter. `template.java` still has the header.
-- AI-assisted commits include a `Co-Authored-By` or `Generated-by` trailer, as in `CONTRIBUTING.md`.
+- AI-assisted commits carry exactly one AI trailer, `Generated-by: <tool name and version>` (for example `Generated-by: Grok 4.7`), as in `CONTRIBUTING.md`. Do not add `Co-Authored-By` for a tool: Git expects `Name <email>` there.
+- Commits are authored by the human developer who runs the agent, never by a bot identity such as "Cursor Agent". Do not hard-code anyone's name or email.
+  - Locally, use the developer's own `git config user.name` / `user.email` as they are. If they are unset, stop and ask before committing.
+  - In a cloud agent, take the identity from the task's `Author` field (`Name <email>`) and run `git config user.name "<name>"` and `git config user.email "<email>"` before the first commit. If the task gives no author, commit anyway and say in the summary that the developer must run `git commit --amend --reset-author` before opening a pull request.
+  - Check with `git log -1 --format='%an <%ae>'`.
 - Commit subjects use `KAFKA-XXXXX` only when a real JIRA exists; otherwise `MINOR` or `HOTFIX`.
 - Secrets stay in the environment (`CURSOR_API_KEY`, `SLACK_SIGNING_SECRET`). Do not write them into source, workflows, or logs.
+
+## Upgrade notes
+
+A change that operators or client users can notice (protocol version bump, new or changed config, metric, CLI option or output, changed default or behavior) gets one bullet in `docs/getting-started/upgrade.md`.
+
+- The target release is `version=` in `gradle.properties` without `-SNAPSHOT` (for example `4.5.0-SNAPSHOT` means 4.5.0). Put the bullet under `## Upgrading to <that version>` / `### Notable changes in <that version>`, never under an older, already released section.
+- If that section does not exist yet, add it at the top of the file in the same format as the existing ones.
+- Say what changed, what users see, what stays compatible, and link the KIP or JIRA.
+
+## Upstream-ready branch
+
+Work happens on a branch of this fork that is based on `cursor-scaffolding`, so it contains the Cursor and Grok Bot scaffolding. That scaffolding must never reach `apache/kafka`. When the implementation is done, also prepare a clean branch the user can open an upstream pull request from himself:
+
+1. Get current upstream trunk: `git fetch upstream trunk`, or in a cloud agent without that remote `git fetch https://github.com/apache/kafka trunk` and use `FETCH_HEAD`.
+2. Create `<JIRA-ID>-upstream` (for example `KAFKA-15923-upstream`) from that trunk and cherry-pick only the feature commits. Never cherry-pick scaffolding, task, or plan commits.
+3. Verify that `git diff --name-only <trunk>...HEAD` lists none of `.cursor/`, `grok-bot/`, `scripts/cursor_api_trigger.py`, `scripts/simulate_ci.sh`, `.github/workflows/agent-guardrails.yml`, the README setup section, or the `.cursor/**` RAT exclude in `build.gradle`.
+4. Re-run the targeted tests and Checkstyle on that branch.
+5. Push it to `origin` (`1123/kafka`) only. The user opens the upstream pull request himself.
+

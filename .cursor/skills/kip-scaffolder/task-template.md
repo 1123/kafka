@@ -5,6 +5,7 @@
 - **Ticket / KIP:** [e.g., KAFKA-14920 or KIP-912]
 - **Summary:** [1-2 sentences summarizing what needs to be added, fixed, or updated]
 - **Target Module:** [e.g., :clients, :core, :storage, or Auto-Detect]
+- **Author:** [Your Name <you@example.com>; required for cloud agents, optional locally where `git config` is used]
 
 #### 2. Detailed Requirements
 
@@ -27,3 +28,6 @@
 1. Implementation in the designated target module.
 2. Unit test covering edge cases, and a cluster integration test if broker state is required.
 3. Commit message format: `[JIRA-ID]: [Brief description]` (or `MINOR: [Brief description]` if no JIRA exists).
+4. Commits authored by the developer named under **Author** (or the local `git config` identity), with one `Generated-by: <tool and version>` trailer.
+5. Upgrade note under the section for the current `gradle.properties` version, if the change is user-visible.
+6. A clean `[JIRA-ID]-upstream` branch from current apache trunk with only the feature commits, pushed to `origin`.
