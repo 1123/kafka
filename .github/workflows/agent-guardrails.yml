@@ -16,8 +16,10 @@
 name: Agent Guardrails
 
 # Separate from ci.yml / build.yml. Those workflows still own the full
-# "check releaseTarGz" and JUnit matrix. This job only runs Checkstyle
-# (and, on a manual run, SpotBugs) for Gradle modules the diff touches.
+# "check releaseTarGz" and JUnit matrix. This workflow runs the boundary
+# check (third-party Gradle dependencies, import-control edits, copied-in
+# licenses) and Checkstyle (and, on a manual run, SpotBugs) for Gradle
+# modules the diff touches. Import allow lists are Checkstyle ImportControl.
 on:
   pull_request:
   workflow_dispatch:
@@ -39,6 +41,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: Boundary check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Dependency, import-control, and license boundaries
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.base-ref || 'trunk' }}
+        run: python3 scripts/check_boundaries.py
+
   checkstyle:
     runs-on: ubuntu-latest
     timeout-minutes: 90

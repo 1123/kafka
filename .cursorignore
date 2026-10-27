@@ -1,0 +1,75 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Keeps agents out of files they do not need. Source they do need stays visible:
+# src/main, src/test, checkstyle/, gradle/dependencies.gradle, config/server.properties,
+# clients/src/main/resources/common/message/ (the protocol specs), and AGENTS.md.
+# .cursor/ is not ignored. Agents have to read the rules and skills.
+#
+# Secrets and key material. config/server-* and config/zookeeper-* match .gitignore:
+# they are local broker overrides, not the checked-in samples. Docker keystores are
+# fixtures, not source.
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.p12
+*.jks
+*.keystore
+*.truststore
+docker/test/fixtures/secrets/
+docker/examples/fixtures/secrets/
+docker/examples/fixtures/client-secrets/
+.release-settings.json
+config/server-*
+config/zookeeper-*
+
+# Build outputs and tool caches. These are large, regenerated, and not the code under review.
+build/
+.gradle/
+build_eclipse/
+out/
+target/
+*.class
+*.log
+logs/
+tests/results/
+tests/venv/
+release/.venv/
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# Large generated artifacts. Protocol classes are produced under build/generated/
+# from the message specs, which stay visible. src/generated is the other generator
+# output the clean task deletes. Do not hide the specs or hand-written Java.
+**/src/generated/
+**/src/generated-test/
+docs/generated/
+jmh-benchmarks/generated/
+**/.jqwik-database
+
+# Binaries. The Gradle wrapper jar is a binary the agent does not need to read.
+gradle/wrapper/*.jar
+*.jar
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.so
+*.dll
+*.dylib

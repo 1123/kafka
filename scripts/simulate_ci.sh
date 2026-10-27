@@ -21,6 +21,7 @@
 #
 # Usage:
 #   scripts/simulate_ci.sh
+#   scripts/simulate_ci.sh --boundaries-only
 #   scripts/simulate_ci.sh --module clients --skip-spotbugs
 #   scripts/simulate_ci.sh clients --tests org.apache.kafka.clients.MetadataTest
 #   scripts/simulate_ci.sh --module streams:examples --tests RestoreIntegrationTest
@@ -36,19 +37,25 @@ MODULE=""
 TESTS=""
 SKIP_SPOTBUGS=0
 WITH_RAT=0
+SKIP_BOUNDARIES=0
+BOUNDARIES_ONLY=0
 GRADLE_ARGS=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/simulate_ci.sh [module] [--module <gradle-project>] [--tests <filter>]
-                              [--skip-spotbugs] [--with-rat] [-- <gradle args>]
+                              [--skip-spotbugs] [--with-rat] [--boundaries-only]
+                              [--skip-boundaries] [-- <gradle args>]
 
-Runs checkstyleMain, checkstyleTest, and spotbugsMain. A module limits those
-tasks to one Gradle project (clients or streams:examples). --tests adds the
-matching test task. --with-rat adds the root rat task.
+Runs scripts/check_boundaries.py, then checkstyleMain, checkstyleTest, and
+spotbugsMain. A module limits the Gradle tasks to one project (clients or
+streams:examples). --tests adds the matching test task. --with-rat adds the
+root rat task. --boundaries-only stops after the boundary check.
+--skip-boundaries skips that check.
 
-This is the static-analysis slice of .github/workflows/build.yml. The full
-validate job also builds the release tarball.
+The Gradle tasks are the static-analysis slice of .github/workflows/build.yml.
+The full validate job also builds the release tarball. Import allow lists are
+enforced by Checkstyle's ImportControl module when the Gradle tasks run.
 EOF
 }
 
@@ -80,6 +87,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-rat)
       WITH_RAT=1
+      shift
+      ;;
+    --boundaries-only)
+      BOUNDARIES_ONLY=1
+      shift
+      ;;
+    --skip-boundaries)
+      SKIP_BOUNDARIES=1
       shift
       ;;
     --)
@@ -118,6 +133,13 @@ if [[ "$WITH_RAT" -eq 1 ]]; then
 fi
 if [[ -n "$TESTS" ]]; then
   TASKS+=("${PREFIX}test")
+fi
+
+if [[ "$SKIP_BOUNDARIES" -eq 0 ]]; then
+  python3 scripts/check_boundaries.py
+fi
+if [[ "$BOUNDARIES_ONLY" -eq 1 ]]; then
+  exit 0
 fi
 
 echo "Running: ./gradlew --build-cache ${TASKS[*]} ${TESTS:+--tests $TESTS} ${GRADLE_ARGS[*]:-}"
