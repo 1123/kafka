@@ -34,7 +34,18 @@ org.apache.kafka.clients.admin.AddPartitionsTest:
 - testReplicaPlacementPartialServers
 - testWrongReplicaCount
 org.apache.kafka.clients.admin.AdminClientTimeoutIntegrationTest:
+- testAbortTransactionTimeout
+- testAdminClientHandlingBadIPWithoutTimeout
 - testCallInFlightTimeouts
+- testClose
+- testDelayedClose
+- testDescribeConfigWithOptionTimeoutMs
+- testDescribeTransactionsTimeout
+- testDescribeUserScramCredentialsTimeout
+- testForceClose
+- testListClientMetricsResourcesTimeoutMs
+- testListConfigResourcesTimeoutMs
+- testMinimumRequestTimeouts
 org.apache.kafka.clients.admin.AdminClientWithPoliciesIntegrationTest:
 - testInvalidAlterConfigsDueToPolicy
 org.apache.kafka.clients.admin.AdminFenceProducersTest:
@@ -477,7 +488,11 @@ org.apache.kafka.clients.consumer.ShareConsumerDeliveryTest:
 - testShareAutoOffsetResetEarliestAfterLsoMovement
 - testShareAutoOffsetResetMultipleGroupsWithDifferentValue
 org.apache.kafka.clients.consumer.ShareConsumerFairnessTest:
-- testPartitionsWithDeepBacklogAreServedFairly
+- testPartitionWithoutRecordsIsReadFirstWhenRecordsArrive
+- testPartitionsRotateWhenAllPartitionsReturnRecordsWithExplicitAcknowledgement
+- testPartitionsRotateWhenAllPartitionsReturnRecordsWithImplicitAcknowledgement
+- testPartitionsServedFairlyInImplicitMode
+- testPartitionsServedFairlyWithExplicitAcknowledgements
 org.apache.kafka.clients.consumer.ShareConsumerLagTest:
 - testSharePartitionLagAfterAlterShareGroupOffsets
 - testSharePartitionLagAfterDeleteShareGroupOffsets
@@ -580,6 +595,9 @@ org.apache.kafka.clients.producer.ProducerSendWhileDeletionTest:
 - testSendWithRecreatedTopic
 - testSendWithTopicDeletionMidWay
 - testSendWithTopicReassignmentIsMidWay
+org.apache.kafka.clients.producer.TransactionsBounceTest:
+- testWithGroupMetadataClassic
+- testWithGroupMetadataConsumer
 org.apache.kafka.clients.security.GroupAuthorizerIntegrationTest:
 - testAsyncConsumeCloseWithGroupPermission
 - testAsyncConsumeUnsubscribeWithGroupPermission

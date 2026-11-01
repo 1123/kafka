@@ -2703,8 +2703,8 @@ org.apache.kafka.clients.consumer.internals.ShareSubscriptionStateTest:
 - testMarkPendingRevocationIsNoOp
 - testMetadataTopics
 - testMovePartitionToEndRoundRobin
+- testSubscribe
 - testSubscribeToEmptySetStillMarksSubscribed
-- testSubscribeToShareGroup
 - testUnsubscribeClearsAllState
 org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerTest:
 - testBuildingHeartbeatAllOwnedTaskListsSentWhenOnlyOneRoleChanges
@@ -2783,6 +2783,7 @@ org.apache.kafka.clients.consumer.internals.StreamsGroupHeartbeatRequestManagerT
 - testTaskOffsetsResentAfterReset
 - testTaskOffsetsResentWhenChangedAcrossInterval
 - testTopicAuthorizationFailedErrorResponse
+- testUnknownStatusCodeFailsMemberFatally
 - testUnsupportedVersionFailureWhileSending
 org.apache.kafka.clients.consumer.internals.StreamsGroupTopologyDescriptionRequestManagerTest:
 - testCoordinatorErrorTriggersRediscovery
@@ -2885,6 +2886,7 @@ org.apache.kafka.clients.consumer.internals.StreamsMembershipManagerTest:
 - testStandbyTaskOfUnknownSubtopologyInHeartbeatResponseFailsMember
 - testStandbyTasksAreNullInHeartbeatResponse
 - testStaticMemberUsesExpectedLeaveEpochOnClose
+- testTransitionToFatalAfterLeaveRequestGenerated
 - testTransitionToFatalMarksPendingRevocationBeforeCallback
 - testTransitionToFatalWhenInAcknowledging
 - testTransitionToFatalWhenInJoining
@@ -3410,6 +3412,8 @@ org.apache.kafka.clients.producer.internals.RecordAccumulatorTest:
 - testHasRoomForAllowsOversizedFirstRecordButRejectsSubsequentRecords
 - testLinger
 - testMutedPartitions
+- testNeedsBufferExtensionResultExposesRequiredCapacity
+- testNeedsNewBatchResultHasNoExtensionBytes
 - testNextReadyCheckDelay
 - testPartialDrain
 - testProduceRequestResultAwaitAllDependents
@@ -4075,6 +4079,7 @@ org.apache.kafka.common.message.MessageTest:
 - testSyncGroupDefaultGroupInstanceId
 - testTaggedFieldCountRejectedWhenExceedingHardCap
 - testTaggedFieldCountRejectedWhenLargerThanRemainingBytes
+- testTaggedFieldsWrittenInAscendingTagOrder
 - testThrottleTimeIgnorableInDescribeGroupsResponse
 - testTxnOffsetCommitRequestVersions
 - testTxnOffsetCommitResponseVersions
@@ -4299,6 +4304,10 @@ org.apache.kafka.common.network.SslTransportLayerTest:
 - testClientAuthenticationRequiredUntrustedProvided
 - testClientAuthenticationRequiredValidProvided
 - testClientEndpointNotValidated
+- testCloseNotifyAfterFullResponseWithoutFinDeliversResponseAndDisconnects
+- testCloseNotifyAfterFullResponseWithoutFinDisconnectsOnUnmute
+- testCloseNotifyAfterPartialResponseWithoutFinDisconnects
+- testCloseNotifyAfterZeroLengthResponseWithoutFinDeliversResponseAndDisconnects
 - testClosePlaintext
 - testCloseSsl
 - testCustomClientAndServerSslEngineFactory
@@ -4312,6 +4321,7 @@ org.apache.kafka.common.network.SslTransportLayerTest:
 - testGracefulRemoteCloseDuringHandshakeRead
 - testGracefulRemoteCloseDuringHandshakeWrite
 - testHandshakeUnwrapContinuesUnwrappingOnNeedUnwrapAfterAllBytesRead
+- testHasBytesBufferedOnceInboundIsDone
 - testIOExceptionsDuringHandshakeRead
 - testIOExceptionsDuringHandshakeWrite
 - testInterBrokerSslConfigValidation
@@ -4334,14 +4344,18 @@ org.apache.kafka.common.network.SslTransportLayerTest:
 - testPemFilesWithoutServerKeyPassword
 - testSSLEngineCloseInboundInvokedOnClose
 - testScatteringRead
+- testScatteringReadReturnsBytesReadBeforeEof
 - testSelectorPollReadSize
 - testServerKeystoreDynamicUpdate
 - testServerKeystoreDynamicUpdateWithNewSubjectAltName
 - testServerRequestMetrics
 - testServerTruststoreDynamicUpdate
 - testTlsDefaults
+- testTransferFromDoesNotReportFailedWriteAsFailedRead
 - testTransferFromDoesNotSendStaleBytesAfterFailedRead
 - testTransferFromDoesNotSendStaleBytesAtEndOfFile
+- testTransferFromThrowsClosedFileChannelAsIs
+- testTransferFromThrowsFileReadExceptionWhenSizeFails
 - testUngracefulRemoteCloseDuringHandshakeRead
 - testUngracefulRemoteCloseDuringHandshakeWrite
 - testUnsupportedCiphers
@@ -4440,6 +4454,7 @@ org.apache.kafka.common.protocol.ApiKeysTest:
 - testForIdWithInvalidIdLow
 - testHasValidVersions
 - testHtmlOnlyHaveStableApi
+- testLatestVersionForRequestHeader
 - testResponseThrottleTime
 org.apache.kafka.common.protocol.ByteBufferAccessorTest:
 - testReadArray
@@ -4658,8 +4673,11 @@ org.apache.kafka.common.record.internal.FileRecordsTest:
 - testTruncateNotCalledIfSizeIsBiggerThanTargetSize
 - testTruncateNotCalledIfSizeIsSameAsTargetSize
 - testWriteToDoesNotNotifyHandlerWhenChannelClosed
+- testWriteToDoesNotNotifyHandlerWhenFileClosed
 - testWriteToNotifiesHandlerAndRethrows
-- testWriteToNotifiesHandlerWhenSizeFails
+- testWriteToNotifiesHandlerOfSocketFailureOnlyOverPlaintext
+- testWriteToNotifiesHandlerOnlyOfFailedReadsWhenChannelDistinguishesThem
+- testWriteToReportsFailedSizeAsFailedRead
 org.apache.kafka.common.record.internal.LegacyRecordTest:
 - testChecksum
 - testEquality
@@ -5534,12 +5552,7 @@ org.apache.kafka.common.security.plain.internals.PlainSaslServerTest:
 - emptyTokens
 - noAuthorizationIdSpecified
 org.apache.kafka.common.security.scram.internals.ScramCredentialUtilsTest:
-- extraneousFields
-- generateCredential
-- invalidCredential
-- missingFields
 - scramCredentialCache
-- stringConversion
 org.apache.kafka.common.security.scram.internals.ScramFormatterTest:
 - rfc7677Example
 - saslName
@@ -5548,6 +5561,7 @@ org.apache.kafka.common.security.scram.internals.ScramMessagesTest:
 - invalidClientFirstMessage
 - invalidServerFinalMessage
 - invalidServerFirstMessage
+- serverFirstMessageUsesAsciiDigitsRegardlessOfDefaultLocale
 - validClientFinalMessage
 - validClientFirstMessage
 - validServerFinalMessage
@@ -5600,6 +5614,10 @@ org.apache.kafka.common.security.ssl.DefaultSslEngineFactoryTest:
 org.apache.kafka.common.security.ssl.SslPrincipalMapperTest:
 - testCommaWithWhitespace
 - testInvalidRules
+- testNameDerivedFromFullMatchWithAlternation
+- testNameDerivedFromFullMatchWithUnanchoredPattern
+- testReplacementAppliedOnce
+- testRuleProducingEmptyNameStillMatches
 - testRulesSplitting
 - testSslPrincipalMapper
 - testValidRules

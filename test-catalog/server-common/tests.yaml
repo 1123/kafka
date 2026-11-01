@@ -367,6 +367,7 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testDeleteStateRequestCoordinatorFoundSuccessfully
 - testDeleteStateRequestFailedMaxRetriesExhausted
 - testDeleteStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testDeleteStateRequestVersionFollowsRequestHeaderVersion
 - testDeleteStateRequestWithCoordinatorNodeLookup
 - testDeleteStateRequestWithRetryAndCoordinatorNodeLookup
 - testFindCoordinatorAttemptsExhausted
@@ -380,6 +381,7 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testInitializeStateRequestCoordinatorFoundSuccessfully
 - testInitializeStateRequestFailedMaxRetriesExhausted
 - testInitializeStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testInitializeStateRequestVersionFollowsRequestHeaderVersion
 - testInitializeStateRequestWithCoordinatorNodeLookup
 - testInitializeStateRequestWithRetryAndCoordinatorNodeLookup
 - testPersisterStateManagerClose
@@ -390,6 +392,7 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testReadStateRequestIllegalStateCoordinatorFoundSuccessfully
 - testReadStateRequestRetryWithCoordinatorNodeLookup
 - testReadStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testReadStateRequestVersionFollowsRequestHeaderVersion
 - testReadStateRequestWithCoordinatorNodeLookup
 - testReadStateSummaryClientResponseErrorRetriesExhausted
 - testReadStateSummaryRequestCoordinatorFoundOnRetry
@@ -398,6 +401,7 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testReadStateSummaryRequestIllegalStateCoordinatorFoundSuccessfully
 - testReadStateSummaryRequestRetryWithCoordinatorNodeLookup
 - testReadStateSummaryRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testReadStateSummaryRequestVersionFollowsRequestHeaderVersion
 - testReadStateSummaryRequestWithCoordinatorNodeLookup
 - testResponseErrorHandling
 - testWriteStateClientResponseErrorRetriesExhausted
@@ -410,6 +414,8 @@ org.apache.kafka.server.share.persister.PersisterStateManagerTest:
 - testWriteStateRequestCoordinatorFoundSuccessfully
 - testWriteStateRequestFailedMaxRetriesExhausted
 - testWriteStateRequestRetryWithNotCoordinatorSuccessfulOnRetry
+- testWriteStateRequestVersionFollowsRequestHeaderVersion
+- testWriteStateRequestVersionFollowsRequestHeaderVersionChange
 - testWriteStateRequestWithCoordinatorNodeLookup
 - testWriteStateRequestWithRetryAndCoordinatorNodeLookup
 org.apache.kafka.server.util.CommandLineUtilsTest:

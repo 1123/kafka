@@ -298,9 +298,7 @@ kafka.api.MetricsTest:
 - testMetrics
 kafka.api.PlaintextAdminIntegrationTest:
 - testAbortTransaction
-- testAbortTransactionTimeout
 - testAclOperations
-- testAdminClientHandlingBadIPWithoutTimeout
 - testAlterLogDirsAfterDeleteRecords
 - testAlterReplicaLogDirs
 - testAlterShareGroupOffsets
@@ -309,7 +307,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testAppendConfigToEmptyDefaultValue
 - testAppendConfigToExistentValue
 - testAuthorizedOperations
-- testClose
 - testConsumeAfterDeleteRecords
 - testConsumerGroupWithMemberMigration
 - testConsumerGroupWithMemberRemoval
@@ -318,7 +315,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testCreatePartitionWithOptionRetryOnQuotaViolation
 - testCreateTopicsReturnsConfigs
 - testDefaultNameQuotaIsNotEqualToDefaultQuota
-- testDelayedClose
 - testDeleteConsumerGroupOffsets
 - testDeleteRecordsAfterCorruptRecords
 - testDeleteRecordsWithException
@@ -327,7 +323,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDeleteStreamsGroups
 - testDescribeAndAlterConfigs
 - testDescribeClassicGroups
-- testDescribeConfigWithOptionTimeoutMs
 - testDescribeConfigsForLog4jLogLevels
 - testDescribeGroups
 - testDescribeProducers
@@ -336,9 +331,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testDescribeStreamsGroupsNotReady
 - testDescribeStreamsGroupsWithTopologyDescription
 - testDescribeTransactions
-- testDescribeTransactionsTimeout
 - testDescribeUserScramCredentials
-- testDescribeUserScramCredentialsTimeout
 - testElectPreferredLeaders
 - testElectUncleanLeadersAndNoop
 - testElectUncleanLeadersForAllPartitions
@@ -347,7 +340,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testElectUncleanLeadersForUnknownPartitions
 - testElectUncleanLeadersNoop
 - testElectUncleanLeadersWhenNoLiveBrokers
-- testForceClose
 - testGroupConfigEvaluatedAfterBrokerRestart
 - testIncrementalAlterAndDescribeGroupConfigs
 - testIncrementalAlterConfigsDeleteAndSetBrokerConfigs
@@ -361,9 +353,7 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testInvalidAlterPartitionReassignments
 - testInvalidIncrementalAlterConfigs
 - testListClientMetricsResources
-- testListClientMetricsResourcesTimeoutMs
 - testListConfigResources
-- testListConfigResourcesTimeoutMs
 - testListConsumerGroupOffsets
 - testListConsumerGroups
 - testListGroups
@@ -375,7 +365,6 @@ kafka.api.PlaintextAdminIntegrationTest:
 - testLogStartOffsetAfterDeleteRecords
 - testLogStartOffsetCheckpoint
 - testLongTopicNames
-- testMinimumRequestTimeouts
 - testNullConfigs
 - testOffsetsForTimesAfterDeleteRecords
 - testReplicaCanFetchFromLogStartOffsetAfterDeleteRecords
@@ -565,8 +554,6 @@ kafka.api.SslProducerSendTest:
 - testSendOffset
 - testSendToPartition
 - testSendToPartitionWithFollowerShutdownShouldNotTimeout
-kafka.api.TransactionsBounceTest:
-- testWithGroupMetadata
 kafka.api.UserClientIdQuotaTest:
 - testProducerConsumerOverrideLowerQuota
 - testProducerConsumerOverrideUnthrottled
@@ -800,6 +787,7 @@ kafka.coordinator.transaction.TransactionMarkerChannelManagerTest:
 - shouldOnlyWriteTxnCompletionOnce
 - shouldRemoveMarkersForTxnPartitionWhenPartitionEmigrated
 - shouldRetryAppendToLogOnEndTxnWhenCoordinatorNotAvailableError
+- shouldRetryMarkersUntilLeaderEndpointIsAvailable
 - shouldSaveForLaterWhenLeaderUnknownButNotAvailable
 - shouldSkipSendMarkersWhenLeaderNotFound
 - testRemoveMetricsOnClose
@@ -825,6 +813,7 @@ kafka.coordinator.transaction.TransactionMarkerRequestCompletionHandlerTest:
 - shouldThrowIllegalStateExceptionWhenUnknownError
 kafka.coordinator.transaction.TransactionStateManagerTest:
 - shouldCompleteEmptyPreparedTransactionOnLoad
+- shouldNotExpireTransactionalIdsOfPartitionWaitingToBeReloaded
 - shouldNotRemoveExpiredTransactionalIdsIfLogAppendFails
 - shouldNotRemoveOngoingTransactionalIds
 - shouldNotRemovePrepareAbortTransactionalIds
@@ -850,9 +839,15 @@ kafka.coordinator.transaction.TransactionStateManagerTest:
 - testListTransactionsFiltering
 - testListTransactionsFilteringWithInvalidPattern
 - testListTransactionsWithCoordinatorLoadingInProgress
+- testLoadAbandonedWhenPartitionIsNotOnline
+- testLoadAbandonedWhenPartitionTransitionsBeforeHighWatermarkReachesLogEndOffset
 - testLoadAndRemoveTransactionsForPartition
+- testLoadAtNewLeaderEpochWhileWaitingForHighWatermark
 - testLoadTransactionMetadataContainingSegmentEndingWithEmptyBatch
 - testLoadTransactionMetadataWithCorruptedLog
+- testLoadWaitsForHighWatermarkToReachLogEndOffset
+- testLoadWhenHighWatermarkReachesLogEndOffsetDuringListenerRegistration
+- testLoadWithoutWaitingWhenHighWatermarkAlreadyReachedOnRegistration
 - testMakeFollowerLoadingPartition
 - testNotCoordinatorAfterLosingLeadershipBeforeResignation
 - testNotCoordinatorIfLeadershipLostBeforeAppendCompletes
@@ -1125,6 +1120,7 @@ kafka.server.BrokerLifecycleManagerTest:
 - testKraftJBODMetadataVersionUpdateEvent
 - testRegistrationIncludesDirs
 - testRegistrationTimeout
+- testRelativeCordonedLogDirsIncludedInHeartbeatAfterInitialCatchUp
 - testSuccessfulRegistration
 kafka.server.BrokerMetricNamesTest:
 - testMetrics
@@ -1376,6 +1372,7 @@ kafka.server.DynamicBrokerConfigTest:
 - testDynamicListenerConfig
 - testDynamicLogConfigCordonedLogDirs
 - testDynamicLogConfigHandlesSynonymsCorrectly
+- testDynamicLogConfigRelativeCordonedLogDir
 - testDynamicLogLocalRetentionMsConfig
 - testDynamicLogLocalRetentionSizeConfig
 - testDynamicLogLocalRetentionSkipsOnInvalidConfig
@@ -1633,6 +1630,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareFetchRequestInvalidRequestOnFinalEpoch
 - testHandleShareFetchRequestInvalidRequestOnInitialEpoch
 - testHandleShareFetchRequestInvalidShareSessionError
+- testHandleShareFetchRequestNegativeMaxRecords
 - testHandleShareFetchRequestPropagatesAcknowledgementErrorMessage
 - testHandleShareFetchRequestQuotaTagsVerification
 - testHandleShareFetchRequestReleaseAcquiredRecordsThrowError
@@ -1645,6 +1643,7 @@ kafka.server.KafkaApisTest:
 - testHandleShareFetchRequestSuccessfulShareSessionLifecycle
 - testHandleShareFetchRequestTopicDeletedDuringFetch
 - testHandleShareFetchRequestWhenShareSessionCacheIsFull
+- testHandleShareFetchRequestZeroMaxRecordsIsAccepted
 - testHandleShareFetchShareGroupDisabled
 - testHandleShareFetchWithAcknowledgementQuotaTagsVerification
 - testHandleSyncGroupRequest
@@ -1857,6 +1856,7 @@ kafka.server.KafkaConfigTest:
 - testPortInQuorumVotersNotRequiredToMatchFirstControllerListenerPortForThisKRaftController
 - testRejectsNegativeBrokerId
 - testRejectsNegativeNodeId
+- testRelativeLogDirWithRelativeOrAbsoluteCordon
 - testSaslJwksEndpointRetryDefaults
 - testSaslMechanismMirrorAdminProtocolDefaultsToInterBrokerProtocol
 - testSaslMechanismMirrorAdminProtocolExplicitlySet
@@ -2387,6 +2387,7 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 - testConstructorThrowsErrorOnNullArgs
 - testContainsTopicReturnsFalseOnException
 - testContainsTopicSuccess
+- testDlqTopicMaxMessageBytesAppliesTopicConfigBounds
 - testDlqTopicMaxMessageBytesFallsBackToBrokerConfigOnInvalidTopicOverride
 - testDlqTopicMaxMessageBytesFallsBackToBrokerConfigWhenNoTopicOverride
 - testDlqTopicMaxMessageBytesFallsBackToBrokerConfigWhenTopicConfigNull
@@ -2395,13 +2396,19 @@ kafka.server.share.ShareCoordinatorMetadataCacheHelperImplTest:
 - testGetClusterNodesSuccess
 - testIsDlqAutoTopicCreateEnabledReturnsFalse
 - testIsDlqAutoTopicCreateEnabledReturnsTrue
+- testIsDlqEnabledOnTopicParsesPaddedStringAndBoolean
 - testIsDlqEnabledOnTopicReturnsFalse
+- testIsDlqEnabledOnTopicReturnsFalseForInvalidValue
+- testIsDlqEnabledOnTopicReturnsFalseWhenFlagMissing
 - testIsDlqEnabledOnTopicReturnsFalseWhenTopicConfigEmpty
 - testIsDlqEnabledOnTopicReturnsFalseWhenTopicConfigNull
 - testIsDlqEnabledOnTopicReturnsTrue
 - testIsShareGroupDlqCopyRecordEnabledReturnsFalse
 - testIsShareGroupDlqCopyRecordEnabledReturnsFalseWhenGroupConfigEmpty
 - testIsShareGroupDlqCopyRecordEnabledReturnsTrue
+- testRequestHeaderVersionReturnsHeaderV2OnOlderMetadataVersion
+- testRequestHeaderVersionReturnsHeaderV3
+- testRequestHeaderVersionReturnsMinimumVersionHeaderOnException
 - testShareCoordinatorReturnsNoNodeIfTopicMetadataInvalid
 - testShareCoordinatorReturnsNoNodeOnGetAliveNodeEmptyResponse
 - testShareCoordinatorReturnsNoNodeOnGetAliveNodeException
@@ -2428,6 +2435,7 @@ kafka.server.share.ShareFetchUtilsTest:
 - testAccumulateAcquiredRecordsSingleRecord
 - testAccumulateAcquiredRecordsWithRanges
 - testProcessFetchResponse
+- testProcessFetchResponsePreservesFetchOrder
 - testProcessFetchResponseWhenNoRecordsAreAcquired
 - testProcessFetchResponseWithEmptyRecords
 - testProcessFetchResponseWithLsoMovementForTopicPartition
@@ -2456,7 +2464,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testConcurrentInitialEpochRequestsClearsState
 - testCreateIdleShareFetchTask
 - testDelayedInitializationShouldCompleteFetchRequest
-- testFetchMessagesRotatePartitions
+- testFetchMessagesPreservesPartitionOrder
 - testGetErroneousAndValidTopicIdPartitions
 - testListenerRegistration
 - testMultipleSequentialShareFetches
@@ -2495,6 +2503,7 @@ kafka.server.share.SharePartitionManagerTest:
 - testSharePartitionPartialInitializationFailure
 - testShareSessionUpdateTopicIdsBrokerSide
 - testSubsequentShareSession
+- testSubsequentShareSessionPartitionOrder
 - testToForgetPartitions
 - testZeroSizeShareSession
 kafka.server.share.SharePartitionTest:
