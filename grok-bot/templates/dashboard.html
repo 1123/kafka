@@ -86,7 +86,7 @@
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
     form { display: grid; gap: 8px; }
     label { display: grid; gap: 4px; font-size: 0.92rem; color: var(--muted); }
-    input, textarea {
+    input, textarea, select {
       font: inherit;
       width: 100%;
       border: 1px solid var(--line);
@@ -105,10 +105,20 @@
   <h1>Grok Bot</h1>
   <p>PM, QA, and DevOps approvals for the Kafka fork. Agents start only after a person asks them to.</p>
   <div class="banner">
-    <strong>In-memory mock.</strong>
-    Restarting the process clears every row. Seeded items are marked <em>mock</em> and were not sent to Slack or to <code>api.cursor.com</code>.
+    Approvals, decisions, and launch records are stored in a local SQLite file and stay after a restart.
+    The agent list also includes Cursor cloud agents for the default repo. There are no sample rows.
   </div>
   <div class="status" id="flags">Loading status…</div>
+  <form id="identity-form" class="card" style="margin-top: 16px;">
+    <h2>Your name</h2>
+    <label>Name
+      <input id="identity" maxlength="200" placeholder="Recorded as requester and approver" autocomplete="name">
+    </label>
+    <label>Decision note
+      <input id="note" maxlength="500" placeholder="Optional note stored with approve or reject">
+    </label>
+    <p class="meta">Saved in this browser. If the name is empty, the server uses <code>GROK_APPROVER</code>.</p>
+  </form>
   <p id="notice" role="status"></p>
   <div class="grid">
     <section class="card">
@@ -123,6 +133,10 @@
       <h2>Agent runs</h2>
       <div id="agents">None.</div>
     </section>
+    <section class="card">
+      <h2>Audit log</h2>
+      <div id="events">None.</div>
+    </section>
   </div>
   <div class="grid grid-2" style="margin-top: 16px;">
     <section class="card">
@@ -136,12 +150,13 @@
       </form>
     </section>
     <section class="card">
-      <h2>Launch an agent</h2>
+      <h2>Launch an approved request</h2>
       <form id="launch-form">
-        <label>Prompt <textarea name="prompt" required maxlength="20000" placeholder="Instruction sent as prompt.text"></textarea></label>
-        <label>Repo <input name="repo" required></label>
-        <label>Ref <input name="ref" required></label>
-        <button class="primary" type="submit">Launch</button>
+        <label>Approval
+          <select name="approval_id" id="approved-picker" required></select>
+        </label>
+        <p class="meta">Repo, ref, and prompt come from the stored approval. A launch needs an approved request.</p>
+        <button class="primary" type="submit" disabled>Launch</button>
       </form>
     </section>
   </div>
@@ -153,12 +168,32 @@ const defaults = {
   ref: document.body.dataset.ref
 };
 for (const form of document.querySelectorAll("form")) {
-  form.elements.repo.value = defaults.repo;
-  form.elements.ref.value = defaults.ref;
+  if (form.elements.repo) form.elements.repo.value = defaults.repo;
+  if (form.elements.ref) form.elements.ref.value = defaults.ref;
+}
+const identityInput = document.querySelector("#identity");
+identityInput.value = localStorage.getItem("grok-bot-identity") || "";
+identityInput.addEventListener("input", () => {
+  localStorage.setItem("grok-bot-identity", identityInput.value.trim());
+});
+document.querySelector("#identity-form").addEventListener("submit", (event) => event.preventDefault());
+
+function actorFields() {
+  return {
+    approver: identityInput.value.trim(),
+    note: document.querySelector("#note").value.trim()
+  };
 }
 
 function pill(status) {
-  return `<span class="pill ${status}">${status}</span>`;
+  const known = ["pending", "approved", "rejected", "launched", "error", "not_sent"];
+  const cls = known.includes(status) ? status : "";
+  return `<span class="pill ${cls}">${escapeHtml(status)}</span>`;
+}
+
+function safeLink(url, label) {
+  if (!/^https:\/\//.test(url || "")) return "";
+  return ` · <a href="${escapeHtml(url)}">${escapeHtml(label || url)}</a>`;
 }
 
 function escapeHtml(value) {
@@ -168,41 +203,84 @@ function escapeHtml(value) {
 }
 
 function approvalRow(item) {
-  const mock = item.mock ? `<span class="pill">mock</span>` : "";
-  const buttons = item.status === "pending" ? `
+  const pending = item.status === "pending" ? `
     <div class="actions">
-      <button data-act="approve" data-id="${item.id}">Approve</button>
-      <button class="primary" data-act="launch" data-id="${item.id}" ${item.prompt ? "" : "disabled"}>Approve and launch</button>
-      <button data-act="reject" data-id="${item.id}">Reject</button>
+      <button data-act="approve" data-id="${escapeHtml(item.id)}">Approve</button>
+      <button class="primary" data-act="launch" data-id="${escapeHtml(item.id)}" ${item.prompt ? "" : "disabled"}>Approve and launch</button>
+      <button data-act="reject" data-id="${escapeHtml(item.id)}">Reject</button>
     </div>` : "";
+  const relaunch = item.status === "approved" && item.prompt ? `
+    <div class="actions">
+      <button class="primary" data-act="start" data-id="${escapeHtml(item.id)}">Launch</button>
+    </div>` : "";
+  const people = [
+    item.requester ? `requested by ${escapeHtml(item.requester)}` : "",
+    item.approver ? `${escapeHtml(item.status)} by ${escapeHtml(item.approver)}` : "",
+    item.decided_at ? escapeHtml(item.decided_at) : ""
+  ].filter(Boolean).join(" · ");
   return `<div class="row">
     <div class="title">${escapeHtml(item.title)}</div>
-    <div class="meta">${pill(item.status)}${mock}<code>${escapeHtml(item.id)}</code>
+    <div class="meta">${pill(item.status)}<code>${escapeHtml(item.id)}</code>
       · ${escapeHtml(item.source)} · ${escapeHtml(item.repo)} @ ${escapeHtml(item.ref)}</div>
+    ${people ? `<div class="meta">${people}</div>` : ""}
     ${item.prompt ? `<div class="meta">${escapeHtml(item.prompt)}</div>` : ""}
     ${item.note ? `<div class="meta">${escapeHtml(item.note)}</div>` : ""}
-    ${buttons}
+    ${pending}${relaunch}
   </div>`;
 }
 
 function agentRow(item) {
-  const mock = item.mock ? `<span class="pill">mock</span>` : "";
-  const link = item.url ? ` · <a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>` : "";
+  const origin = item.origin ? `<span class="pill">${escapeHtml(item.origin)}</span>` : "";
   const remote = item.agent_id ? ` · ${escapeHtml(item.agent_id)}` : "";
+  const branch = item.branch ? ` · ${escapeHtml(item.branch)}` : "";
+  const run = item.run_status ? ` · run ${escapeHtml(item.run_status)}` : "";
+  const approval = item.approval_id ? ` · ${escapeHtml(item.approval_id)}` : "";
+  const title = item.name || item.prompt || item.id;
+  const prompt = item.prompt && item.prompt !== title ? `<div class="meta">${escapeHtml(item.prompt)}</div>` : "";
   return `<div class="row">
-    <div class="title">${escapeHtml(item.prompt)}</div>
-    <div class="meta">${pill(item.status)}${mock}<code>${escapeHtml(item.id)}</code>${remote}${link}</div>
-    <div class="meta">${escapeHtml(item.repo)} @ ${escapeHtml(item.ref)}</div>
+    <div class="title">${escapeHtml(title)}</div>
+    <div class="meta">${pill(item.status)}${origin}<code>${escapeHtml(item.id)}</code>${remote}${branch}${run}${approval}${safeLink(item.url, "agent")}${safeLink(item.pr_url, "pull request")}</div>
+    <div class="meta">${escapeHtml(item.repo)} @ ${escapeHtml(item.ref || "")}</div>
+    ${prompt}
     ${item.error ? `<div class="meta">${escapeHtml(item.error)}</div>` : ""}
   </div>`;
+}
+
+function eventRow(item) {
+  const ids = [item.approval_id, item.agent_run_id].filter(Boolean).map(escapeHtml).join(" · ");
+  return `<div class="row">
+    <div class="title">${escapeHtml(item.kind)} · ${escapeHtml(item.actor || "unknown")}</div>
+    <div class="meta">${escapeHtml(item.ts)}${ids ? " · " + ids : ""}</div>
+    ${item.detail ? `<div class="meta">${escapeHtml(item.detail)}</div>` : ""}
+  </div>`;
+}
+
+function fillApproved(approvals) {
+  const select = document.querySelector("#approved-picker");
+  const current = select.value;
+  const approved = approvals.filter((item) => item.status === "approved" && item.prompt);
+  select.innerHTML = approved.map((item) => (
+    `<option value="${escapeHtml(item.id)}">${escapeHtml(item.id)} — ${escapeHtml(item.title)}</option>`
+  )).join("");
+  if (current) select.value = current;
+  select.disabled = approved.length === 0;
+  document.querySelector("#launch-form button").disabled = approved.length === 0;
 }
 
 async function refresh() {
   const response = await fetch("/api/status");
   const data = await response.json();
+  const cursorState = !data.cursor_api_key_configured
+    ? "missing"
+    : (data.cursor_agents_error
+      ? escapeHtml(data.cursor_agents_error)
+      : (data.cursor_agents_fetched_at ? "updated " + escapeHtml(data.cursor_agents_fetched_at) : "checking…"));
+  const dbName = (data.db_path || "").split("/").pop();
   document.querySelector("#flags").innerHTML = `
     <div><span>Cursor API key</span><br>${data.cursor_api_key_configured ? "configured" : "missing"}</div>
     <div><span>Slack signing secret</span><br>${data.slack_signing_configured ? "configured" : "missing"}</div>
+    <div><span>Cursor agents</span><br>${cursorState}</div>
+    <div><span>Database</span><br><code title="${escapeHtml(data.db_path || "")}">${escapeHtml(dbName)}</code></div>
     <div><span>Default repo</span><br><code>${escapeHtml(data.defaults.repo)}</code></div>
     <div><span>Default ref</span><br><code>${escapeHtml(data.defaults.ref)}</code></div>`;
   const pending = data.approvals.filter((item) => item.status === "pending");
@@ -210,6 +288,8 @@ async function refresh() {
   document.querySelector("#pending").innerHTML = pending.map(approvalRow).join("") || "None.";
   document.querySelector("#decided").innerHTML = decided.map(approvalRow).join("") || "None.";
   document.querySelector("#agents").innerHTML = data.agents.map(agentRow).join("") || "None.";
+  document.querySelector("#events").innerHTML = (data.events || []).map(eventRow).join("") || "None.";
+  fillApproved(data.approvals);
 }
 
 async function postJson(url, body) {
@@ -237,14 +317,17 @@ document.addEventListener("click", async (event) => {
   const id = button.dataset.id;
   try {
     if (button.dataset.act === "reject") {
-      await postJson(`/api/approvals/${id}/reject`);
+      await postJson(`/api/approvals/${id}/reject`, actorFields());
       notice.textContent = `Rejected ${id}.`;
     } else if (button.dataset.act === "launch") {
-      const result = await postJson(`/api/approvals/${id}/approve?launch=true`);
+      const result = await postJson(`/api/approvals/${id}/approve?launch=true`, actorFields());
       const launch = result.launch;
       notice.textContent = launch && launch.ok ? `Launched from ${id}.` : `Approved ${id}. Launch: ${launch && launch.error ? launch.error : (launch && launch.agent && launch.agent.error) || "not launched"}`;
+    } else if (button.dataset.act === "start") {
+      const result = await postJson("/api/agents", {approval_id: id});
+      notice.textContent = `Launched ${result.agent.agent_id || result.agent.id}.`;
     } else {
-      await postJson(`/api/approvals/${id}/approve`);
+      await postJson(`/api/approvals/${id}/approve`, actorFields());
       notice.textContent = `Approved ${id}.`;
     }
   } catch (err) {
@@ -262,7 +345,8 @@ document.querySelector("#queue-form").addEventListener("submit", async (event) =
       prompt: form.elements.prompt.value,
       repo: form.elements.repo.value,
       ref: form.elements.ref.value,
-      source: "dashboard"
+      source: "dashboard",
+      requester: identityInput.value.trim()
     });
     notice.textContent = `Queued ${created.id}.`;
     form.elements.title.value = "";
@@ -278,12 +362,9 @@ document.querySelector("#launch-form").addEventListener("submit", async (event) 
   const form = event.target;
   try {
     const result = await postJson("/api/agents", {
-      prompt: form.elements.prompt.value,
-      repo: form.elements.repo.value,
-      ref: form.elements.ref.value
+      approval_id: form.elements.approval_id.value
     });
     notice.textContent = `Launched ${result.agent.agent_id || result.agent.id}.`;
-    form.elements.prompt.value = "";
   } catch (err) {
     notice.textContent = err.message;
   }

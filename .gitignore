@@ -63,3 +63,9 @@ storage/kafka-tiered-storage/
 docker/test/report_*.html
 kafka.Kafka
 __pycache__
+
+# Grok Bot local state (approvals and launch records). Never commit this file.
+grok-bot/*.sqlite
+grok-bot/*.sqlite-journal
+grok-bot/*.sqlite-wal
+grok-bot/*.sqlite-shm

@@ -17,8 +17,8 @@ Agent edits in this tree miss Kafka's real gates: the Checkstyle header and comp
 | `.cursor/skills/pre-review/` | Diff review before a human looks: deprecated APIs, anti-patterns, tests |
 | `.cursor/BUGBOT.md` | The same checklist for Bugbot on pull requests |
 | `.cursorignore` | Secrets, build outputs, and large generated trees stay out of agent context |
-| `grok-bot/` | FastAPI dashboard, Slack webhook, approve / reject, agent launch |
-| `scripts/cursor_api_trigger.py` | `POST https://api.cursor.com/v1/agents` |
+| `grok-bot/` | FastAPI dashboard, Slack webhook, approve / reject, agent launch. State is a local SQLite file |
+| `scripts/cursor_api_trigger.py` | `POST /v1/agents`, and the list/detail calls the dashboard uses to show live agents |
 | `scripts/pre_review.py` | Findings report for the pre-review skill |
 | `scripts/check_boundaries.py` | Fails unapproved dependency, import-control, and license-header changes |
 | `scripts/simulate_ci.sh` | Boundary check, then Checkstyle, SpotBugs, and an optional test filter |
@@ -36,25 +36,36 @@ export SLACK_SIGNING_SECRET=dev-secret
 export CURSOR_API_KEY=...
 export GROK_DEFAULT_REPO=https://github.com/1123/kafka
 export GROK_DEFAULT_REF=trunk
+export GROK_APPROVER=Ada          # optional; the dashboard name field overrides this
+export GROK_DB_PATH=grok-bot.sqlite   # optional; this file next to app.py is the default
 uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-`CURSOR_API_KEY` is required only when a launch is requested. `SLACK_SIGNING_SECRET` is required for `POST /slack/events`. Both stay in the environment.
+`CURSOR_API_KEY` is required to launch an agent and to list live cloud agents. `SLACK_SIGNING_SECRET` is required for `POST /slack/events`. Both stay in the environment and are not written to the database, logs, or API responses.
 
-Open http://127.0.0.1:8000 . Slack slash commands and Events API callbacks post to `/slack/events`. The app checks `X-Slack-Signature` (v0 HMAC-SHA256, five-minute window). A URL verification handshake returns the challenge. An `app_mention` or slash command queues an approval and does not start an agent.
+Approvals, the approver name, and launch records are stored in the SQLite file from `GROK_DB_PATH` (default `grok-bot/grok-bot.sqlite`, gitignored). Restarting uvicorn keeps them. The file starts empty: there are no seeded rows.
 
-`POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/reject`, and `POST /api/agents` are the dashboard controls. A launch runs `scripts/cursor_api_trigger.py`.
+Open http://127.0.0.1:8000 . Slack slash commands and Events API callbacks post to `/slack/events`. The app checks `X-Slack-Signature` (v0 HMAC-SHA256, five-minute window). A URL verification handshake returns the challenge. An `app_mention` or slash command queues an approval under the Slack user id and does not start an agent.
 
-## Dashboard mock
+`POST /api/approvals/{id}/approve` and `POST /api/approvals/{id}/reject` record the decision. The approver is the JSON `approver` field, or `GROK_APPROVER` when that field is empty. `POST /api/agents` requires an approved `approval_id` and launches with the repo, ref, and prompt stored on that approval. A launch runs `scripts/cursor_api_trigger.py` with `autoCreatePR` and `workOnCurrentBranch` left false.
+
+`GET /api/status` is what the page polls. It merges local launch rows with Cursor agents for `GROK_DEFAULT_REPO`: `GET /v1/agents` (newest 100), then `GET /v1/agents/{id}` for the repository and `GET /v1/agents/{id}/runs/{latestRunId}` for the branch and pull request URL. The last successful list is cached in the same SQLite file and refreshed in the background about every 20 seconds. Locally recorded agent ids are included even when they are older than that page.
+
+```bash
+/tmp/grok-bot-venv/bin/python -m unittest test_app.py
+```
+
+## Dashboard
 
 The page is one column on a warm background:
 
-1. A banner that the store is in-memory and seeded rows are mocks.
-2. A status strip: whether the Cursor API key and Slack signing secret are set (booleans only), plus the default repo and ref.
-3. **Pending**, seeded with `apr-1001` "Share-group lag metric" (source `mock`). Approve records the decision. Approve and launch also calls the Cursor API.
-4. **Decided**, seeded with `apr-1002` "Edit generated MetadataResponse.java", already rejected, because generated sources are regenerated rather than edited.
-5. **Agent runs**, seeded with `agent-1001` in status `not_sent`. That row was never sent to `api.cursor.com`.
-6. Forms to queue an approval and to launch an agent (prompt, repo, ref).
+1. A banner that rows live in SQLite and there is no sample data.
+2. A status strip: whether the Cursor API key and Slack signing secret are set (booleans only), the last Cursor list time, the database file name, and the default repo and ref.
+3. Your name and an optional decision note. The name is the requester on new rows and the approver on approve or reject.
+4. **Pending** and **Decided**, with requester, approver, and timestamps. Approve records the decision. Approve and launch also calls the Cursor API. Launch on an approved row starts that stored prompt.
+5. **Agent runs**, local launches merged with live cloud agents (status, branch, pull request, agent URL).
+6. **Audit log**, append-only create / approve / reject / launch events.
+7. A form to queue an approval, and a form that launches an already approved request.
 
 The layout is this page. Reload it after `uvicorn` is up.
 

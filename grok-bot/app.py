@@ -19,24 +19,30 @@ Run from this directory:
 
     uvicorn app:app --host 127.0.0.1 --port 8000
 
-State is in memory and is gone when the process exits. Slack requests are
+Approvals and launch records are stored in a local SQLite file (GROK_DB_PATH,
+default grok-bot/grok-bot.sqlite) and survive a restart. Slack requests are
 rejected unless SLACK_SIGNING_SECRET is set. Launching an agent shells out to
 scripts/cursor_api_trigger.py, which reads CURSOR_API_KEY from the environment.
-Neither secret is written to logs or API responses.
+The dashboard also lists cloud agents for the default repo with
+GET /v1/agents, GET /v1/agents/{id}, and GET /v1/agents/{id}/runs/{runId}.
+Neither secret is written to logs or API responses. There are no seeded rows.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
-from dataclasses import asdict, dataclass
+from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,6 +51,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from store import AgentRun, Store, default_db_path
+
 ROOT = Path(__file__).resolve().parent.parent
 TRIGGER = ROOT / "scripts" / "cursor_api_trigger.py"
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
@@ -52,8 +60,20 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "tem
 SLACK_MAX_SKEW_SECONDS = 5 * 60
 MAX_BODY_BYTES = 1_000_000
 MAX_PROMPT_CHARS = 20_000
+CURSOR_LIST_TTL_SECONDS = 20.0
 
-app = FastAPI(title="Grok Bot", version="1.0.0")
+
+def _load_cursor_api():
+    spec = importlib.util.spec_from_file_location("cursor_api_trigger", TRIGGER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {TRIGGER}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["cursor_api_trigger"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+CURSOR_API = _load_cursor_api()
 
 
 def _now() -> str:
@@ -64,6 +84,15 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+def redact_secrets(text: str) -> str:
+    redacted = text or ""
+    for name in ("CURSOR_API_KEY", "SLACK_SIGNING_SECRET"):
+        secret = _env(name)
+        if secret:
+            redacted = redacted.replace(secret, "[redacted]")
+    return redacted
+
+
 def default_repo() -> str:
     return _env("GROK_DEFAULT_REPO", "https://github.com/1123/kafka")
 
@@ -72,145 +101,158 @@ def default_ref() -> str:
     return _env("GROK_DEFAULT_REF", "trunk")
 
 
-@dataclass
-class Approval:
-    id: str
-    title: str
-    prompt: str
-    repo: str
-    ref: str
-    source: str
-    status: str
-    note: str
-    mock: bool
-    created_at: str
-    decided_at: str | None = None
+def resolve_approver(supplied: str) -> str:
+    name = (supplied or "").strip() or _env("GROK_APPROVER")
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="approver name is required (dashboard field or GROK_APPROVER)",
+        )
+    return name[:200]
 
 
-@dataclass
-class AgentRun:
-    id: str
-    approval_id: str | None
-    repo: str
-    ref: str
-    prompt: str
-    status: str
-    agent_id: str | None
-    url: str | None
-    error: str | None
-    mock: bool
-    created_at: str
+def resolve_note(supplied: str, default: str) -> str:
+    text = (supplied or "").strip()
+    return (text or default)[:2000]
 
 
-class Store:
-    def __init__(self) -> None:
+def resolve_requester(supplied: str) -> str:
+    name = (supplied or "").strip() or _env("GROK_APPROVER") or "dashboard"
+    return name[:200]
+
+
+def load_remote_agents(repo: str, api_key: str) -> list[dict]:
+    known = [run.agent_id for run in STORE.list_agents() if run.agent_id]
+    return CURSOR_API.list_repo_agents(api_key, repo, known)
+
+
+def merge_agent_views(local_runs: list[AgentRun], remote: list[dict]) -> list[dict]:
+    """Overlay live Cursor status, branch, and pull request URL onto local launches."""
+    remote_by_id: dict[str, dict] = {}
+    for item in remote:
+        agent_id = item.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            remote_by_id[agent_id] = item
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for run in local_runs:
+        row = asdict(run)
+        remote_item = remote_by_id.get(run.agent_id) if run.agent_id else None
+        if remote_item and run.agent_id:
+            seen.add(run.agent_id)
+            if remote_item.get("status"):
+                row["status"] = remote_item["status"]
+            if remote_item.get("url"):
+                row["url"] = remote_item["url"]
+            row["branch"] = remote_item.get("branch")
+            row["pr_url"] = remote_item.get("pr_url")
+            row["run_status"] = remote_item.get("run_status")
+            row["name"] = remote_item.get("name") or ""
+            row["origin"] = "merged"
+        else:
+            row["branch"] = None
+            row["pr_url"] = None
+            row["run_status"] = None
+            row["name"] = ""
+            row["origin"] = "local"
+        merged.append(row)
+    for item in remote:
+        agent_id = item.get("agent_id")
+        if not isinstance(agent_id, str) or agent_id in seen:
+            continue
+        merged.append(
+            {
+                "id": agent_id,
+                "approval_id": None,
+                "repo": item.get("repo") or "",
+                "ref": item.get("ref") or "",
+                "prompt": item.get("name") or "",
+                "status": item.get("status") or "",
+                "agent_id": agent_id,
+                "url": item.get("url"),
+                "error": None,
+                "created_at": item.get("created_at") or "",
+                "branch": item.get("branch"),
+                "pr_url": item.get("pr_url"),
+                "run_status": item.get("run_status"),
+                "name": item.get("name") or "",
+                "origin": "cursor",
+            }
+        )
+    merged.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return merged
+
+
+class AgentDirectory:
+    """Refresh the Cursor list in the background so /api/status stays local and fast."""
+
+    def __init__(self, loader, ttl_seconds: float = CURSOR_LIST_TTL_SECONDS) -> None:
+        self._loader = loader
+        self._ttl = ttl_seconds
         self._lock = threading.Lock()
-        self._next_approval = 1003
-        self._next_agent = 1002
-        self.approvals: dict[str, Approval] = {}
-        self.agents: dict[str, AgentRun] = {}
-        self._seed()
+        self._fetched_at = 0.0
+        self._refreshing = False
+        self._error: str | None = None
 
-    def _seed(self) -> None:
-        self.approvals["apr-1001"] = Approval(
-            id="apr-1001",
-            title="Share-group lag metric",
-            prompt="Sketch a broker metric for share-group lag. Do not change public APIs.",
-            repo=default_repo(),
-            ref=default_ref(),
-            source="mock",
-            status="pending",
-            note="Seeded pending row. Nothing has been sent to Slack or Cursor.",
-            mock=True,
-            created_at=_now(),
-        )
-        self.approvals["apr-1002"] = Approval(
-            id="apr-1002",
-            title="Edit generated MetadataResponse.java",
-            prompt="",
-            repo=default_repo(),
-            ref=default_ref(),
-            source="mock",
-            status="rejected",
-            note="Rejected by the guardrail: generated sources are regenerated, not edited.",
-            mock=True,
-            created_at=_now(),
-            decided_at=_now(),
-        )
-        self.agents["agent-1001"] = AgentRun(
-            id="agent-1001",
-            approval_id=None,
-            repo=default_repo(),
-            ref=default_ref(),
-            prompt="Sample row only.",
-            status="not_sent",
-            agent_id=None,
-            url=None,
-            error=None,
-            mock=True,
-            created_at=_now(),
-        )
-
-    def snapshot(self) -> dict:
+    @property
+    def error(self) -> str | None:
         with self._lock:
-            approvals = [asdict(item) for item in reversed(list(self.approvals.values()))]
-            agents = [asdict(item) for item in reversed(list(self.agents.values()))]
-        return {
-            "approvals": approvals,
-            "agents": agents,
-            "defaults": {"repo": default_repo(), "ref": default_ref()},
-            "cursor_api_key_configured": bool(_env("CURSOR_API_KEY")),
-            "slack_signing_configured": bool(_env("SLACK_SIGNING_SECRET")),
-        }
+            return self._error
 
-    def add_approval(self, title: str, prompt: str, repo: str, ref: str, source: str) -> Approval:
+    def maybe_refresh(self, repo: str) -> None:
+        if not _env("CURSOR_API_KEY"):
+            return
         with self._lock:
-            approval_id = f"apr-{self._next_approval}"
-            self._next_approval += 1
-            approval = Approval(
-                id=approval_id,
-                title=title.strip() or "Untitled request",
-                prompt=prompt.strip(),
-                repo=repo.strip() or default_repo(),
-                ref=ref.strip() or default_ref(),
-                source=source,
-                status="pending",
-                note="",
-                mock=False,
-                created_at=_now(),
-            )
-            self.approvals[approval_id] = approval
-            return approval
+            if self._refreshing:
+                return
+            if self._fetched_at and (time.monotonic() - self._fetched_at) < self._ttl:
+                return
+            self._refreshing = True
+        threading.Thread(
+            target=self._refresh_thread,
+            args=(repo,),
+            name="cursor-agent-refresh",
+            daemon=True,
+        ).start()
 
-    def decide(self, approval_id: str, status: str, note: str) -> Approval:
+    def _refresh_thread(self, repo: str) -> None:
+        try:
+            self.refresh(repo)
+        finally:
+            with self._lock:
+                self._refreshing = False
+
+    def refresh(self, repo: str) -> None:
+        api_key = _env("CURSOR_API_KEY")
+        if not api_key:
+            with self._lock:
+                self._error = None
+                self._fetched_at = time.monotonic()
+            return
+        try:
+            agents = self._loader(repo, api_key)
+            STORE.replace_cursor_cache(CURSOR_API.repo_key(repo), agents)
+        except Exception as exc:
+            with self._lock:
+                self._error = redact_secrets(str(exc))[:500]
+                self._fetched_at = time.monotonic()
+            return
         with self._lock:
-            approval = self.approvals.get(approval_id)
-            if approval is None:
-                raise KeyError(approval_id)
-            if approval.status != "pending":
-                raise ValueError(approval.status)
-            approval.status = status
-            approval.note = note
-            approval.decided_at = _now()
-            return approval
-
-    def add_agent(self, run: AgentRun) -> AgentRun:
-        with self._lock:
-            self.agents[run.id] = run
-            return run
-
-    def next_agent_id(self) -> str:
-        with self._lock:
-            agent_id = f"agent-{self._next_agent}"
-            self._next_agent += 1
-            return agent_id
-
-    def get(self, approval_id: str) -> Approval | None:
-        with self._lock:
-            return self.approvals.get(approval_id)
+            self._error = None
+            self._fetched_at = time.monotonic()
 
 
-STORE = Store()
+STORE = Store(default_db_path())
+DIRECTORY = AgentDirectory(load_remote_agents)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    DIRECTORY.maybe_refresh(default_repo())
+    yield
+
+
+app = FastAPI(title="Grok Bot", version="1.0.0", lifespan=_lifespan)
 
 
 class ApprovalIn(BaseModel):
@@ -219,14 +261,17 @@ class ApprovalIn(BaseModel):
     repo: str = ""
     ref: str = ""
     source: str = "dashboard"
+    requester: str = Field(default="", max_length=200)
+
+
+class DecisionIn(BaseModel):
+    approver: str = Field(default="", max_length=200)
+    note: str = Field(default="", max_length=2000)
 
 
 class AgentIn(BaseModel):
-    repo: str = ""
-    ref: str = ""
-    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_CHARS)
+    approval_id: str = Field(min_length=1, max_length=100)
     name: str | None = Field(default=None, max_length=100)
-    approval_id: str | None = None
 
 
 def verify_slack_signature(body: bytes, timestamp: str, signature: str, secret: str) -> bool:
@@ -245,7 +290,14 @@ def verify_slack_signature(body: bytes, timestamp: str, signature: str, secret: 
     return hmac.compare_digest(expected, signature)
 
 
-def launch_via_script(repo: str, ref: str, prompt: str, name: str | None, approval_id: str | None) -> AgentRun:
+def launch_via_script(
+    repo: str,
+    ref: str,
+    prompt: str,
+    name: str | None,
+    approval_id: str | None,
+    actor: str,
+) -> AgentRun:
     agent_id = STORE.next_agent_id()
     command = [
         sys.executable,
@@ -259,6 +311,22 @@ def launch_via_script(repo: str, ref: str, prompt: str, name: str | None, approv
     ]
     if name:
         command.extend(["--name", name])
+
+    def remember(status: str, remote_agent_id: str | None, url: str | None, error: str | None) -> AgentRun:
+        run = AgentRun(
+            id=agent_id,
+            approval_id=approval_id,
+            repo=repo,
+            ref=ref,
+            prompt=prompt,
+            status=status,
+            agent_id=remote_agent_id,
+            url=url,
+            error=redact_secrets(error)[:2000] if error else None,
+            created_at=_now(),
+        )
+        return STORE.add_agent(run, actor)
+
     try:
         completed = subprocess.run(
             command,
@@ -269,76 +337,24 @@ def launch_via_script(repo: str, ref: str, prompt: str, name: str | None, approv
             env=os.environ.copy(),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        run = AgentRun(
-            id=agent_id,
-            approval_id=approval_id,
-            repo=repo,
-            ref=ref,
-            prompt=prompt,
-            status="error",
-            agent_id=None,
-            url=None,
-            error=str(exc)[:2000],
-            mock=False,
-            created_at=_now(),
-        )
-        return STORE.add_agent(run)
+        return remember("error", None, None, str(exc))
 
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "cursor_api_trigger.py failed").strip()
-        run = AgentRun(
-            id=agent_id,
-            approval_id=approval_id,
-            repo=repo,
-            ref=ref,
-            prompt=prompt,
-            status="error",
-            agent_id=None,
-            url=None,
-            error=detail[:2000],
-            mock=False,
-            created_at=_now(),
-        )
-        return STORE.add_agent(run)
+        return remember("error", None, None, detail)
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return remember("error", None, None, "cursor_api_trigger.py returned a non-JSON body")
 
     remote_agent_id = None
     url = None
-    try:
-        payload = json.loads(completed.stdout)
-        agent = payload.get("agent") if isinstance(payload, dict) else None
-        if isinstance(agent, dict):
-            remote_agent_id = agent.get("id")
-            url = agent.get("url")
-    except json.JSONDecodeError:
-        run = AgentRun(
-            id=agent_id,
-            approval_id=approval_id,
-            repo=repo,
-            ref=ref,
-            prompt=prompt,
-            status="error",
-            agent_id=None,
-            url=None,
-            error="cursor_api_trigger.py returned a non-JSON body",
-            mock=False,
-            created_at=_now(),
-        )
-        return STORE.add_agent(run)
-
-    run = AgentRun(
-        id=agent_id,
-        approval_id=approval_id,
-        repo=repo,
-        ref=ref,
-        prompt=prompt,
-        status="launched",
-        agent_id=remote_agent_id,
-        url=url,
-        error=None,
-        mock=False,
-        created_at=_now(),
-    )
-    return STORE.add_agent(run)
+    agent = payload.get("agent") if isinstance(payload, dict) else None
+    if isinstance(agent, dict):
+        remote_agent_id = agent.get("id")
+        url = agent.get("url")
+    return remember("launched", remote_agent_id, url, None)
 
 
 @app.get("/health")
@@ -360,55 +376,99 @@ def dashboard(request: Request) -> HTMLResponse:
 
 @app.get("/api/status")
 def status() -> dict:
-    return STORE.snapshot()
+    repo = default_repo()
+    DIRECTORY.maybe_refresh(repo)
+    key = CURSOR_API.repo_key(repo)
+    return {
+        "approvals": [asdict(item) for item in STORE.list_approvals()],
+        "agents": merge_agent_views(STORE.list_agents(), STORE.list_cursor_cache(key)),
+        "events": STORE.list_events(40),
+        "defaults": {"repo": repo, "ref": default_ref()},
+        "cursor_api_key_configured": bool(_env("CURSOR_API_KEY")),
+        "slack_signing_configured": bool(_env("SLACK_SIGNING_SECRET")),
+        "db_path": str(STORE.path),
+        "cursor_agents_error": DIRECTORY.error,
+        "cursor_agents_fetched_at": STORE.cursor_cache_fetched_at(key),
+    }
 
 
 @app.post("/api/approvals")
 def create_approval(body: ApprovalIn) -> dict:
-    approval = STORE.add_approval(body.title, body.prompt, body.repo, body.ref, body.source)
+    approval = STORE.add_approval(
+        body.title,
+        body.prompt,
+        body.repo.strip() or default_repo(),
+        body.ref.strip() or default_ref(),
+        (body.source or "dashboard").strip() or "dashboard",
+        resolve_requester(body.requester),
+    )
     return asdict(approval)
 
 
 @app.post("/api/approvals/{approval_id}/approve")
-def approve(approval_id: str, launch: bool = False) -> dict:
+def approve(approval_id: str, launch: bool = False, body: DecisionIn | None = None) -> dict:
+    payload = body or DecisionIn()
+    approver = resolve_approver(payload.approver)
+    note = resolve_note(payload.note, "Approved from the dashboard.")
     try:
-        approval = STORE.decide(approval_id, "approved", "Approved from the dashboard.")
+        approval = STORE.decide(approval_id, "approved", note, approver)
     except KeyError:
         raise HTTPException(status_code=404, detail="approval not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=f"approval is already {exc}") from None
+    except PermissionError:
+        raise HTTPException(
+            status_code=400,
+            detail="approver name is required (dashboard field or GROK_APPROVER)",
+        ) from None
     result: dict = {"approval": asdict(approval), "launch": None}
     if launch:
         if not approval.prompt:
             result["launch"] = {"ok": False, "error": "approval has no prompt to launch"}
             return result
-        run = launch_via_script(approval.repo, approval.ref, approval.prompt, approval.title[:100], approval.id)
+        run = launch_via_script(
+            approval.repo,
+            approval.ref,
+            approval.prompt,
+            approval.title[:100],
+            approval.id,
+            approver,
+        )
         result["launch"] = {"ok": run.status == "launched", "agent": asdict(run)}
     return result
 
 
 @app.post("/api/approvals/{approval_id}/reject")
-def reject(approval_id: str) -> dict:
+def reject(approval_id: str, body: DecisionIn | None = None) -> dict:
+    payload = body or DecisionIn()
+    approver = resolve_approver(payload.approver)
+    note = resolve_note(payload.note, "Rejected from the dashboard.")
     try:
-        approval = STORE.decide(approval_id, "rejected", "Rejected from the dashboard.")
+        approval = STORE.decide(approval_id, "rejected", note, approver)
     except KeyError:
         raise HTTPException(status_code=404, detail="approval not found") from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=f"approval is already {exc}") from None
+    except PermissionError:
+        raise HTTPException(
+            status_code=400,
+            detail="approver name is required (dashboard field or GROK_APPROVER)",
+        ) from None
     return asdict(approval)
 
 
 @app.post("/api/agents")
 def trigger_agent(body: AgentIn) -> dict:
-    repo = body.repo.strip() or default_repo()
-    ref = body.ref.strip() or default_ref()
-    if body.approval_id is not None:
-        approval = STORE.get(body.approval_id)
-        if approval is None:
-            raise HTTPException(status_code=404, detail="approval not found")
-        if approval.status != "approved":
-            raise HTTPException(status_code=409, detail="approval must be approved before launch")
-    run = launch_via_script(repo, ref, body.prompt, body.name, body.approval_id)
+    approval = STORE.get(body.approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if approval.status != "approved":
+        raise HTTPException(status_code=409, detail="approval must be approved before launch")
+    if not approval.prompt:
+        raise HTTPException(status_code=409, detail="approval has no prompt to launch")
+    name = (body.name or approval.title)[:100]
+    actor = approval.approver or _env("GROK_APPROVER") or "dashboard"
+    run = launch_via_script(approval.repo, approval.ref, approval.prompt, name, approval.id, actor)
     if run.status != "launched":
         raise HTTPException(status_code=502, detail={"agent": asdict(run)})
     return {"ok": True, "agent": asdict(run)}
@@ -453,12 +513,14 @@ def _handle_slack_json(body: bytes) -> dict:
         event = payload.get("event") if isinstance(payload.get("event"), dict) else {}
         if event.get("type") == "app_mention":
             text = re.sub(r"<@[A-Z0-9]+>", "", str(event.get("text") or "")).strip()
+            user_id = str(event.get("user") or "").strip()
             approval = STORE.add_approval(
                 title="Slack mention",
                 prompt=text[:MAX_PROMPT_CHARS],
                 repo=default_repo(),
                 ref=default_ref(),
                 source="slack",
+                requester=user_id or "slack",
             )
             return {"ok": True, "approval_id": approval.id}
         return {"ok": True}
@@ -473,15 +535,17 @@ def _handle_slack_command(body: bytes) -> dict:
         return values[0]
 
     command = first("command").strip() or "/grok"
-    user = first("user_name").strip()
+    user_name = first("user_name").strip()
+    user_id = first("user_id").strip()
     text = first("text").strip()[:MAX_PROMPT_CHARS]
-    title = f"{command} from {user}".strip() if user else command
+    title = f"{command} from {user_name}".strip() if user_name else command
     approval = STORE.add_approval(
         title=title[:200],
         prompt=text,
         repo=default_repo(),
         ref=default_ref(),
         source="slack",
+        requester=user_id or user_name or "slack",
     )
     return {
         "response_type": "ephemeral",
