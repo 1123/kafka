@@ -1,6 +1,6 @@
 # Cursor & Grok Bot setup guide
 
-This branch lives on the personal fork `1123/kafka`. Keep it here. Do not push it to `apache/kafka` and do not open a pull request against upstream. The Apache Kafka README below this section is unchanged.
+This branch lives on the personal fork `1123/kafka`. Keep it here. Do not push it to `apache/kafka` and do not open a pull request against upstream. The Apache Kafka README below this section is unchanged. Upstream agent instructions stay in `AGENTS.md`. This section is the fork's index and does not copy that file.
 
 ## Problem
 
@@ -14,10 +14,15 @@ Agent edits in this tree miss Kafka's real gates: the Checkstyle header and comp
 | `.cursor/rules/kafka-testing.mdc` | JUnit 5, Mockito, `@ClusterTest` / `ClusterInstance` |
 | `.cursor/rules/pr-guardrails.mdc` | Public API, generated code, release tooling, compatibility |
 | `.cursor/skills/kip-scaffolder/` | KIP or JIRA to code, including `template.java` |
+| `.cursor/skills/pre-review/` | Diff review before a human looks: deprecated APIs, anti-patterns, tests |
+| `.cursor/BUGBOT.md` | The same checklist for Bugbot on pull requests |
+| `.cursorignore` | Secrets, build outputs, and large generated trees stay out of agent context |
 | `grok-bot/` | FastAPI dashboard, Slack webhook, approve / reject, agent launch |
 | `scripts/cursor_api_trigger.py` | `POST https://api.cursor.com/v1/agents` |
-| `scripts/simulate_ci.sh` | Checkstyle, SpotBugs, and an optional test filter |
-| `.github/workflows/agent-guardrails.yml` | Checkstyle on modules a pull request changed |
+| `scripts/pre_review.py` | Findings report for the pre-review skill |
+| `scripts/check_boundaries.py` | Fails unapproved dependency, import-control, and license-header changes |
+| `scripts/simulate_ci.sh` | Boundary check, then Checkstyle, SpotBugs, and an optional test filter |
+| `.github/workflows/agent-guardrails.yml` | Boundary check, then Checkstyle on modules a pull request changed |
 
 `.cursor/**` is excluded from Apache RAT because Cursor rules and skills must start with YAML frontmatter. `template.java` still has the ASF header. It sits outside every Gradle source set (`src/main/java`, `src/test/java`), so `checkstyleMain` and `compileJava` leave it alone until the KIP skill copies it into a module.
 
@@ -56,13 +61,15 @@ The layout is this page. Reload it after `uvicorn` is up.
 ## Local CI subset
 
 ```bash
+scripts/simulate_ci.sh --boundaries-only
 scripts/simulate_ci.sh
 scripts/simulate_ci.sh --module clients --skip-spotbugs
 scripts/simulate_ci.sh --module clients --tests org.apache.kafka.clients.MetadataTest
 scripts/simulate_ci.sh --with-rat
+python3 scripts/pre_review.py
 ```
 
-`build.yml` runs `./gradlew check releaseTarGz -x test` on Java 25. This helper runs `checkstyleMain`, `checkstyleTest`, and `spotbugsMain` (the checks inside `check` that catch agent patches). The release tarball stays on that validate job. `--tests` adds a Gradle `--tests` filter.
+`build.yml` runs `./gradlew check releaseTarGz -x test` on Java 25. This helper runs `scripts/check_boundaries.py` first, then `checkstyleMain`, `checkstyleTest`, and `spotbugsMain` (the checks inside `check` that catch agent patches). The release tarball stays on that validate job. `--tests` adds a Gradle `--tests` filter. `--boundaries-only` stops after the boundary check. `scripts/pre_review.py` prints the advisory findings report and does not fail the build.
 
 ## Launch a cloud agent
 
@@ -78,7 +85,9 @@ The script calls `POST /v1/agents` on `https://api.cursor.com`, as documented at
 
 ## Agent guardrails workflow
 
-`.github/workflows/agent-guardrails.yml` runs on `pull_request` and `workflow_dispatch` with `contents: read`. It uses `.github/actions/setup-gradle` (Temurin 17, the action's broker baseline) and runs Checkstyle for Gradle projects whose `src/` or build files changed. A root `*.gradle`, `gradle/`, or `checkstyle/` diff runs Checkstyle for the whole build. SpotBugs runs when the dispatch input `run-spotbugs` is true, because SpotBugs compiles main sources and the main CI job already runs it. `ci.yml` and `build.yml` are unchanged. GitHub shows `workflow_dispatch` in the Actions tab once this file is on the repository default branch.
+`.github/workflows/agent-guardrails.yml` runs on `pull_request` and `workflow_dispatch` with `contents: read`. The boundary job runs `scripts/check_boundaries.py` with no Java setup. It fails when the diff changes a third-party Gradle dependency, edits `checkstyle/import-control*.xml`, or adds a non-Apache license header, unless the diff carries the matching `boundary-allow:` marker. Java import allow lists stay in those XML files and still fail in the Checkstyle job (`ImportControl` in `checkstyle/checkstyle.xml`). That job uses `.github/actions/setup-gradle` (Temurin 17, the action's broker baseline) and runs Checkstyle for Gradle projects whose `src/` or build files changed. A root `*.gradle`, `gradle/`, or `checkstyle/` diff runs Checkstyle for the whole build. SpotBugs runs when the dispatch input `run-spotbugs` is true, because SpotBugs compiles main sources and the main CI job already runs it. `ci.yml` and `build.yml` are unchanged. GitHub shows `workflow_dispatch` in the Actions tab once this file is on the repository default branch.
+
+Before asking for review, run `python3 scripts/pre_review.py`. The checklist is `.cursor/skills/pre-review/SKILL.md`. Bugbot reads `.cursor/BUGBOT.md`.
 
 ---
 
