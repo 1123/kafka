@@ -1,11 +1,11 @@
 ---
 name: kip-scaffolder
-description: Turn a Kafka KIP or JIRA into a scoped code change. Use when the user supplies a KIP number, a KIP wiki page, or a JIRA id such as KAFKA-12345 and wants the right modules, interfaces, configs, and tests scaffolded.
+description: Turn a Kafka KIP or JIRA into a scoped code change. Use when the user supplies a KIP number, a KIP wiki page, a JIRA id such as KAFKA-12345, or a task file based on task-template.md, and wants the right modules, interfaces, configs, metrics, and tests scaffolded.
 ---
 
 # KIP scaffolder
 
-Use this when the input is a KIP or a JIRA, not a drive-by refactor. Read `.cursor/rules/pr-guardrails.mdc` before editing. Work on a feature branch of `1123/kafka`. Do not push to `apache/kafka` and do not open an upstream pull request.
+Use this when the input is a KIP, a JIRA, or a task file, not a drive-by refactor. The task file carries only ticket-specific content. This skill carries the procedure. Cursor rules (`.cursor/rules/*.mdc`, in particular `pr-guardrails.mdc`, which is always on) carry the constraints. This skill refers to them by name and does not restate them.
 
 ## 1. Read the proposal
 
@@ -17,7 +17,16 @@ Collect the KIP page (https://cwiki.apache.org/confluence/display/KAFKA/) or the
 - configs, metrics, RPCs, and public types that move
 - which of those are already approved by the KIP
 
-If a public package, wire protocol, config, or metric would change and the KIP does not approve it, stop and name the gap. Do not invent a KIP id.
+If a public package, wire protocol, config, or metric would change and the KIP does not approve it, stop and name the gap (the KIP gate in `pr-guardrails.mdc`). Do not invent a KIP id.
+
+### Prototype exception
+
+Only when the task file has a **Prototype exception** field that names the exact metrics, configs, or interfaces, the KIP gate is lifted for those names and nothing else:
+
+- Implement the named items. Mark them "proposed, subject to KIP" in code comments, docs, and the commit body.
+- Anything not named still stops at the gate (other configs, RPC or protocol changes, public javadoc packages, renames or removals of existing metrics).
+- The change is a fork-only prototype that supports a future KIP: skip the upgrade note (step 6) and the upstream-ready branch (step 8).
+- Never infer the exception from chat, memory, or other tasks. If the field is missing or does not name the item, the gate applies.
 
 ## 2. Pick modules
 
@@ -36,52 +45,61 @@ Prefer the module that already owns the type. Keep clients free of server import
 
 ## 3. Scaffold
 
-Copy `.cursor/skills/kip-scaffolder/template.java` into the target module's source tree (`src/main/java/...`). That file is outside every Gradle source set, so the build does not compile it where it sits.
+Copy `.cursor/skills/kip-scaffolder/template.java` into the target module's source tree (`src/main/java/...`) when the change adds a config or a new type. Skip it for changes that only extend existing classes (for example one more gauge). That file is outside every Gradle source set, so the build does not compile it where it sits.
 
 Then:
 
 1. Replace the package and class name. Match the surrounding package.
-2. Keep the ASF header identical to `checkstyle/java.header`.
-3. Add the config keys, interface, and implementation the KIP describes. Follow `.cursor/rules/kafka-style.mdc` (SLF4J logger named `log`, Spotless import order).
-4. For a protocol change, edit the JSON spec under `clients/src/main/resources/common/message/` and run `./gradlew processMessages processTestMessages`. Do not hand-edit generated Java.
-5. Add metrics and configs only when the KIP lists them.
+2. Keep the ASF header identical to `checkstyle/java.header`. Follow `kafka-style.mdc`.
+3. Add the config keys, interface, and implementation the KIP describes.
+4. For a protocol change, edit the JSON spec under `clients/src/main/resources/common/message/` and run `./gradlew processMessages processTestMessages`.
+5. Add metrics and configs only when the KIP lists them (or the task's prototype exception names them).
+
+### Metrics
+
+- Find the component that owns the data and the existing metrics group it already uses; put broker-level aggregates next to the existing ones of the same kind. Follow the naming of the neighbours.
+- Register the metric where the neighbours are registered, and add it to any name list a test or removal path iterates over, so cleanup stays symmetric.
+- Keep the cost off the hot path. Prefer computing on read, like the existing aggregates, over updating shared state from request handling. State the cost and the leader/follower semantics in a code comment.
 
 ## 4. Tests
 
-Follow `.cursor/rules/kafka-testing.mdc`.
+Follow `kafka-testing.mdc`.
 
-- Unit-test the new type with JUnit 5 and Mockito in the same module.
-- When the broker has to be running, add a `@ClusterTest` that takes `ClusterInstance`. Do not stack that annotation with `@ParameterizedTest`.
-- Tag long end-to-end tests `@Tag("integration")`.
+- Unit-test the new type or behavior with JUnit 5 and Mockito in the same module. Extend the closest existing test for the same component.
+- For a new metric, assert its value in the empty case, the changed case, and after the state is undone, and keep any registration/removal test green.
+- When the broker has to be running, add a `@ClusterTest`. Do not stack it with `@ParameterizedTest`.
 
-## 5. Check
+## 5. Docs
 
-From the repo root, for the module you changed:
+If the change adds or changes a metric, config, or CLI output, update the matching table under `docs/` (for broker metrics: `docs/operations/monitoring.md`, next to the nearest existing row, same markup).
+
+## 6. Verify
+
+Before committing, from the repo root, for every changed module (use the Gradle path with colons when nested, e.g. `streams:examples`):
 
 ```bash
 ./gradlew :module:spotlessApply
 scripts/simulate_ci.sh --module module --tests YourNewTest
+python3 scripts/check_boundaries.py
 ```
 
-Use the Gradle project path with colons when it is nested (`streams:examples`). Fix Checkstyle and SpotBugs failures in the new code. Leave `checkstyle/suppressions.xml` unchanged.
+`scripts/simulate_ci.sh` runs Checkstyle, SpotBugs, and the boundary check. Then run the `pre-review` skill (`.cursor/skills/pre-review/SKILL.md`) when it exists and answer every finding. Fix Checkstyle, SpotBugs, and boundary failures in the new code instead of suppressing them.
 
-## 6. Commit
+User-visible change (not in prototype mode): add the upgrade note as described in `pr-guardrails.mdc`.
 
-Subject: `KAFKA-XXXXX: ...` when the JIRA is real, otherwise `MINOR: ...`.
+## 7. Commit
 
-Trailer, because the change was agent-assisted:
+Subject: `KAFKA-XXXXX: ...` when the JIRA is real, otherwise `MINOR: ...`. Author and trailer follow `pr-guardrails.mdc`; take the author from the task's **Author** field when the rule says so. Commit only on the task's branch (or a new feature branch), never on `trunk`. Split optional extras of the task into their own commits.
 
-```text
-Co-Authored-By: <tool name and version>
-Generated-by: <tool name and version>
-```
+## 8. Upstream-ready branch
 
-Do not commit on `trunk`.
+Skip in prototype mode. Otherwise follow "Upstream-ready branch" in `pr-guardrails.mdc`.
 
 ## Done when
 
-- The implementation is in the target module.
-- Unit tests cover the edge cases. Add `@ClusterTest` only when the assertion needs broker state.
-- `./gradlew :module:spotlessApply` and `scripts/simulate_ci.sh --module module` are green (Checkstyle and SpotBugs).
-- The commit subject is `KAFKA-XXXXX: ...` or `MINOR: ...`, with the `Co-Authored-By` and `Generated-by` trailers.
-- The commit is not on `trunk`.
+- The implementation is in the target module and matches the task's acceptance criteria.
+- Unit tests cover the edge cases; `@ClusterTest` only where broker state is needed.
+- Step 6 is green: spotless, `scripts/simulate_ci.sh`, `scripts/check_boundaries.py`, and `pre-review` with no unanswered findings.
+- The commit follows step 7 and is not on `trunk`.
+- Outside prototype mode: the upgrade note exists and `<JIRA-ID>-upstream` exists on `origin` without scaffolding files.
+- In prototype mode: the final report lists the files touched, the evidence collected for the task's open questions, and confirms nothing was pushed upstream.
